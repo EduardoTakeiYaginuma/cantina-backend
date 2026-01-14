@@ -47,14 +47,12 @@ backend/
 ### 1. Instalação Automática
 
 ```bash
-cd backend
 python setup.py
 ```
 
 ### 2. Instalação Manual
 
 ```bash
-cd backend
 pip install -r requirements.txt
 python main.py
 ```
@@ -62,7 +60,6 @@ python main.py
 ### 3. Usando Uvicorn
 
 ```bash
-cd backend
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
