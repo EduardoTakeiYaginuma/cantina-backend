@@ -1,10 +1,9 @@
 import os
-import subprocess
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict
 import gzip
-import shutil
 
 
 class BackupManager:
@@ -14,43 +13,32 @@ class BackupManager:
         self.backup_dir = Path(backup_dir)
         self.backup_dir.mkdir(exist_ok=True)
 
-        # Get database credentials from environment
-        self.db_host = os.getenv("DB_HOST", "localhost")
-        self.db_port = os.getenv("DB_PORT", "3306")
-        self.db_name = os.getenv("DB_NAME", "cantina_db")
-        self.db_user = os.getenv("DB_USER", "cantina_user")
-        self.db_password = os.getenv("DB_PASSWORD", "cantina_password")
+        # Get database path from environment
+        database_url = os.getenv("DATABASE_URL", "sqlite:///./cantina.db")
+
+        # Parse SQLite path from URL
+        if database_url.startswith("sqlite:///"):
+            db_path = database_url.replace("sqlite:///", "")
+            if db_path.startswith("./"):
+                db_path = db_path[2:]
+            self.db_path = Path(os.path.dirname(os.path.dirname(__file__))) / db_path
+        else:
+            self.db_path = Path("cantina.db")
+
+        self.db_name = self.db_path.stem
 
     def create_backup(self) -> Dict[str, str]:
-        """Create a backup of the database"""
+        """Create a backup of the SQLite database"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_filename = f"backup_{self.db_name}_{timestamp}.sql"
+        backup_filename = f"backup_{self.db_name}_{timestamp}.db"
         backup_path = self.backup_dir / backup_filename
 
         try:
-            # Run mysqldump
-            cmd = [
-                "mysqldump",
-                f"-h{self.db_host}",
-                f"-P{self.db_port}",
-                f"-u{self.db_user}",
-                f"-p{self.db_password}",
-                "--single-transaction",
-                "--routines",
-                "--triggers",
-                self.db_name
-            ]
+            if not self.db_path.exists():
+                raise Exception(f"Database file not found: {self.db_path}")
 
-            with open(backup_path, "w") as f:
-                result = subprocess.run(
-                    cmd,
-                    stdout=f,
-                    stderr=subprocess.PIPE,
-                    text=True
-                )
-
-            if result.returncode != 0:
-                raise Exception(f"mysqldump failed: {result.stderr}")
+            # Copy the database file
+            shutil.copy2(self.db_path, backup_path)
 
             # Compress the backup
             compressed_filename = f"{backup_filename}.gz"
@@ -87,7 +75,7 @@ class BackupManager:
         """List all available backups"""
         backups = []
 
-        for backup_file in sorted(self.backup_dir.glob("backup_*.sql.gz"), reverse=True):
+        for backup_file in sorted(self.backup_dir.glob("backup_*.db.gz"), reverse=True):
             stat = backup_file.stat()
             backups.append({
                 "filename": backup_file.name,
@@ -127,7 +115,7 @@ class BackupManager:
     def restore_backup(self, filename: str) -> Dict[str, any]:
         """Restore database from a backup file"""
         backup_path = self.backup_dir / filename
-        sql_path = None
+        temp_db_path = None
 
         if not backup_path.exists():
             return {
@@ -137,38 +125,19 @@ class BackupManager:
             }
 
         try:
-            # Decompress the backup
-            sql_path = backup_path.with_suffix("")
+            # Decompress the backup to a temp file
+            temp_db_path = backup_path.with_suffix("")
 
             with gzip.open(backup_path, "rb") as f_in:
-                with open(sql_path, "wb") as f_out:
+                with open(temp_db_path, "wb") as f_out:
                     shutil.copyfileobj(f_in, f_out)
 
-            # Restore the database
-            cmd = [
-                "mysql",
-                f"-h{self.db_host}",
-                f"-P{self.db_port}",
-                f"-u{self.db_user}",
-                f"-p{self.db_password}",
-                self.db_name
-            ]
-
-            with open(sql_path, "r") as f:
-                result = subprocess.run(
-                    cmd,
-                    stdin=f,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    timeout=60  # 60 seconds timeout
-                )
+            # Replace the current database with the backup
+            shutil.copy2(temp_db_path, self.db_path)
 
             # Clean up decompressed file
-            if sql_path and sql_path.exists():
-                sql_path.unlink()
-
-            if result.returncode != 0:
-                raise Exception(f"mysql restore failed: {result.stderr}")
+            if temp_db_path and temp_db_path.exists():
+                temp_db_path.unlink()
 
             return {
                 "success": True,
@@ -176,8 +145,8 @@ class BackupManager:
             }
 
         except Exception as e:
-            if sql_path and sql_path.exists():
-                sql_path.unlink()
+            if temp_db_path and temp_db_path.exists():
+                temp_db_path.unlink()
             return {
                 "success": False,
                 "error": str(e),
@@ -187,60 +156,39 @@ class BackupManager:
     def clear_database(self) -> Dict[str, any]:
         """Clear all data from database tables (keep structure)"""
         try:
+            import sqlite3
+
+            if not self.db_path.exists():
+                return {
+                    "success": False,
+                    "error": "Database file not found",
+                    "message": f"Database not found: {self.db_path}"
+                }
+
+            conn = sqlite3.connect(str(self.db_path))
+            cursor = conn.cursor()
+
             # Get list of tables
-            cmd = [
-                "mysql",
-                f"-h{self.db_host}",
-                f"-P{self.db_port}",
-                f"-u{self.db_user}",
-                f"-p{self.db_password}",
-                "-N",
-                "-B",
-                "-e",
-                f"SELECT table_name FROM information_schema.tables WHERE table_schema='{self.db_name}'"
-            ]
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            tables = [row[0] for row in cursor.fetchall()]
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True
-            )
-
-            if result.returncode != 0:
-                raise Exception(f"Failed to get tables: {result.stderr}")
-
-            tables = result.stdout.strip().split("\n")
-
-            if not tables or tables == ['']:
+            if not tables:
+                conn.close()
                 return {
                     "success": True,
                     "message": "No tables to clear"
                 }
 
-            # Disable foreign key checks and truncate tables
-            sql_commands = "SET FOREIGN_KEY_CHECKS=0;\n"
+            # Disable foreign key checks and delete all data
+            cursor.execute("PRAGMA foreign_keys = OFF")
+
             for table in tables:
-                sql_commands += f"TRUNCATE TABLE `{table}`;\n"
-            sql_commands += "SET FOREIGN_KEY_CHECKS=1;\n"
+                cursor.execute(f"DELETE FROM {table}")
 
-            cmd = [
-                "mysql",
-                f"-h{self.db_host}",
-                f"-P{self.db_port}",
-                f"-u{self.db_user}",
-                f"-p{self.db_password}",
-                self.db_name
-            ]
+            cursor.execute("PRAGMA foreign_keys = ON")
 
-            result = subprocess.run(
-                cmd,
-                input=sql_commands,
-                capture_output=True,
-                text=True
-            )
-
-            if result.returncode != 0:
-                raise Exception(f"Failed to clear tables: {result.stderr}")
+            conn.commit()
+            conn.close()
 
             return {
                 "success": True,
