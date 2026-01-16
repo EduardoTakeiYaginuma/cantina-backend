@@ -92,6 +92,8 @@ class Produto(Base):
     nome = Column(String(255), nullable=False)
     valor = Column(Float, nullable=False)
     estoque = Column(Integer, default=0)
+    estoque_minimo = Column(Integer, default=10)
+    is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
