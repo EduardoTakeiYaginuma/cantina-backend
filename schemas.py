@@ -101,7 +101,7 @@ class CustomerBase(BaseModel):
 class CustomerCreate(CustomerBase):
     """Schema para criar Customer"""
     saldo: Optional[float] = 0.0
-    tipo: Optional[UsuarioTipo] = UsuarioTipo.CLIENTE
+    tipo: Optional[UsuarioTipo] = UsuarioTipo.ACAMPANTE
 
 
 class CustomerUpdate(BaseModel):
@@ -367,7 +367,7 @@ class BalanceHistoryResponse(BaseModel):
 # ============================================
 
 class CustomerSalesSummary(BaseModel):
-    """Schema para resumo de vendas do cliente"""
+    """Schema para resumo de vendas do acampante"""
     customer_id: int
     customer_nome: str
     tipo: str
@@ -384,7 +384,7 @@ class CustomerSalesSummary(BaseModel):
 class DashboardStats(BaseModel):
     """Estatísticas gerais do dashboard"""
     total_customers: int
-    total_clientes: int
+    total_acampantes: int
     total_equipe: int
     total_produtos: int
     low_stock_produtos: int

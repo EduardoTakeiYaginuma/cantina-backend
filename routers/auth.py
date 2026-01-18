@@ -228,8 +228,15 @@ def change_user_role(
     """
     Muda o role de um usuário.
     Apenas administradores podem alterar roles.
+    ⚠️ Não é possível alterar a própria role.
     """
     user_repo = SystemUserRepository(db)
+
+    if user_id == current_admin.id:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot change your own role"
+        )
 
     user = user_repo.change_role(user_id, role_data.new_role)
     if not user:

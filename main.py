@@ -1,66 +1,43 @@
 # main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
+from contextlib import asynccontextmanager  # ← NOVO
 import os
 from dotenv import load_dotenv
 
 from database import engine, get_db
 import models
 from routers import auth, usuarios, produtos, sales, dashboard, backup
-from repositories import SystemUserRepository  # ← NOVO
+from repositories import SystemUserRepository
 from models import UserRole
+from auth import get_password_hash
 
 load_dotenv()
-models.Base.metadata.create_all(bind=engine)
-
-app = FastAPI(
-    title="Cantina Swift Flow API",
-    description="API para gerenciamento de cantina",
-    version="1.0.0"
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
-)
-
-app.include_router(auth.router)
-app.include_router(usuarios.router)
-app.include_router(produtos.router)
-app.include_router(sales.router)
-app.include_router(dashboard.router)
-app.include_router(backup.router)
 
 
-@app.get("/")
-def read_root():
-    return {"message": "Cantina Swift Flow API", "version": "1.0.0"}
+# ============================================
+# Lifespan Event Handler (Startup/Shutdown)
+# ============================================
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Gerencia eventos de startup e shutdown do FastAPI
+    """
+    # STARTUP - Executado ao iniciar a aplicação
+    print("🚀 Starting Cantina Swift Flow API...")
 
-@app.get("/health")
-def health_check():
-    return {"status": "healthy"}
+    # Criar tabelas
+    models.Base.metadata.create_all(bind=engine)
+    print("✅ Database tables created/verified")
 
-
-@app.on_event("startup")
-def create_default_user():
-    from auth import get_password_hash
-
+    # Criar usuário admin padrão
     db = next(get_db())
-
     try:
-
         user_repo = SystemUserRepository(db)
-
         admin_user = user_repo.get_by_username("admin")
 
         if not admin_user:
-            # Criar admin usando o repository
             hashed_password = get_password_hash("admin123")
             admin_user = user_repo.create_user(
                 username="admin",
@@ -78,10 +55,68 @@ def create_default_user():
     finally:
         db.close()
 
+    print("🎉 Application startup complete!\n")
+
+    # Aplicação está rodando aqui (yield separa startup de shutdown)
+    yield
+
+    # SHUTDOWN - Executado ao parar a aplicação
+    print("\n👋 Shutting down Cantina Swift Flow API...")
+    print("✅ Cleanup completed")
+
+
+# ============================================
+# FastAPI App
+# ============================================
+
+app = FastAPI(
+    title="Cantina Swift Flow API",
+    description="API para gerenciamento de cantina",
+    version="1.0.0",
+    lifespan=lifespan  # ← NOVO:  Adicionar lifespan
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
+
+# Include routers
+app.include_router(auth.router)
+app.include_router(usuarios.router)
+app.include_router(produtos.router)
+app.include_router(sales.router)
+app.include_router(dashboard.router)
+app.include_router(backup.router)
+
+
+# ============================================
+# Routes
+# ============================================
+
+@app.get("/")
+def read_root():
+    return {"message": "Cantina Swift Flow API", "version": "1.0.0"}
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
+
+
+# ============================================
+# Run
+# ============================================
 
 if __name__ == "__main__":
     import uvicorn
 
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", 8000))
+
     uvicorn.run(app, host=host, port=port)
