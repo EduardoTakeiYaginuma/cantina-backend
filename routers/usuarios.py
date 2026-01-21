@@ -23,7 +23,7 @@ def create_customer(
         db: Session = Depends(get_db),
         current_user: SystemUser = Depends(get_current_user)  # ← SystemUser
 ):
-    """Cria um novo cliente/comprador"""
+    """Cria um novo acampante/comprador"""
     customer_repo = CustomerRepository(db)
 
     # Verificar se nickname já existe
@@ -39,7 +39,7 @@ def create_customer(
         nickname=customer.nickname,
         quarto=customer.quarto,
         saldo=customer.saldo or 0.0,
-        tipo=customer.tipo or UsuarioTipo.CLIENTE,
+        tipo=customer.tipo or UsuarioTipo.ACAMPANTE,
         nome_pai=customer.nome_pai,
         nome_mae=customer.nome_mae
     )
