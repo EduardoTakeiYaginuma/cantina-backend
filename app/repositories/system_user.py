@@ -1,8 +1,8 @@
 # repositories/system_user.py
 from typing import Optional, List
 from sqlalchemy.orm import Session
-from models import SystemUser, UserRole
-from repositories.base import BaseRepository
+from app.models import SystemUser, UserRole
+from app.repositories.base import BaseRepository
 
 
 class SystemUserRepository(BaseRepository[SystemUser]):

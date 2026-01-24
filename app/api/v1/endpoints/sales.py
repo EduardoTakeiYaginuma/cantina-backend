@@ -1,4 +1,4 @@
-# routers/sales.py
+# endpoints/sales.py
 from datetime import date
 from typing import List, Optional
 
@@ -6,11 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
 
-import schemas
+from app import schemas
 from database import get_db
-from models import SystemUser, Produto, Sale, SaleItem, BalanceTransaction, Customers
-from repositories import CustomerRepository, ProdutoRepository
-from routers.auth import get_current_user
+from app.models import SystemUser, Produto, Sale, SaleItem, BalanceTransaction, Customers
+from app.repositories import CustomerRepository, ProdutoRepository
+from app.api.v1.endpoints.auth import get_current_user
 
 router = APIRouter(prefix="/sales", tags=["sales"])
 
@@ -177,7 +177,7 @@ def cancel_sale(
     Cancela uma venda (estorna estoque e saldo).
     Apenas admins podem cancelar vendas.
     """
-    from models import UserRole
+    from app.models import UserRole
 
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(

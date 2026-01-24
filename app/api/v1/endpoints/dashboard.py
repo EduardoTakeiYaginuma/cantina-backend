@@ -1,15 +1,14 @@
-# routers/dashboard.py
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+# endpoints/dashboard.py
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 from typing import List, Optional
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from database import get_db
-from routers.auth import get_current_user
-from repositories import CustomerRepository, ProdutoRepository  # ← NOVO
-from models import SystemUser, Customers, Produto, Sale, SaleItem, UsuarioTipo  # ← ATUALIZADO
-import schemas
+from app.api.v1.endpoints.auth import get_current_user
+from app.models import SystemUser, Customers, Produto, Sale, SaleItem, UsuarioTipo  # ← ATUALIZADO
+from app import schemas
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 

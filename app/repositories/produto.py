@@ -1,9 +1,8 @@
 # repositories/produto.py
 from typing import Optional, List
 from sqlalchemy.orm import Session
-from sqlalchemy import func
-from models import Produto
-from repositories.base import BaseRepository
+from app.models import Produto
+from app.repositories.base import BaseRepository
 
 
 class ProdutoRepository(BaseRepository[Produto]):

@@ -1,14 +1,14 @@
-# routers/produtos.py
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+# endpoints/produtos.py
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
 
 from database import get_db
-from routers.auth import get_current_user
-from repositories import ProdutoRepository  # ← NOVO
-from models import SystemUser, Produto, SaleItem, Restock  # ← ATUALIZADO
-import schemas
+from app.api.v1.endpoints.auth import get_current_user
+from app.repositories import ProdutoRepository  # ← NOVO
+from app.models import SystemUser, Produto, SaleItem, Restock  # ← ATUALIZADO
+from app import schemas
 
 router = APIRouter(prefix="/produtos", tags=["produtos"])
 

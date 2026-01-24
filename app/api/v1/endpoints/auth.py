@@ -1,4 +1,4 @@
-# routers/auth.py
+# endpoints/security.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -6,16 +6,16 @@ from datetime import timedelta
 from typing import Optional
 
 from database import get_db
-from auth import (
+from app.core.security import (
     verify_password,
     create_access_token,
     verify_token,
     get_password_hash,
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
-from repositories import SystemUserRepository
-from models import SystemUser, UserRole
-import schemas
+from app.repositories import SystemUserRepository
+from app.models import SystemUser, UserRole
+from app import schemas
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 

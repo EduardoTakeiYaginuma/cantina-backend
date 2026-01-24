@@ -7,10 +7,11 @@ from dotenv import load_dotenv
 
 from database import engine, get_db
 import models
-from routers import auth, usuarios, produtos, sales, dashboard, backup
+from app.api.v1.endpoints import auth
+from app.api.v1.endpoints import backup, dashboard, produtos, usuarios, sales
 from repositories import SystemUserRepository
 from models import UserRole
-from auth import get_password_hash
+from app.core.security import get_password_hash
 
 load_dotenv()
 
@@ -86,7 +87,7 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# Include routers
+# Include endpoints
 app.include_router(auth.router)
 app.include_router(usuarios.router)
 app.include_router(produtos.router)

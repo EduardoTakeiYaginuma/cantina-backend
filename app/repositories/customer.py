@@ -2,8 +2,8 @@
 from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-from models import Customers, UsuarioTipo
-from repositories.base import BaseRepository
+from app.models import Customers, UsuarioTipo
+from app.repositories.base import BaseRepository
 
 
 class CustomerRepository(BaseRepository[Customers]):

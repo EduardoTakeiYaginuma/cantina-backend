@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional, List
 from enum import Enum
 
-from models import UserRole, UsuarioTipo
+from app.models import UserRole, UsuarioTipo
 
 
 # Base Schemas

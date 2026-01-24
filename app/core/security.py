@@ -2,9 +2,14 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, Depends
 import os
 from dotenv import load_dotenv
+from sqlalchemy.orm import Session
+
+from database import get_db
+from app.models import SystemUser, UserRole
+from app.api.v1.endpoints.auth import oauth2_scheme
 
 load_dotenv()
 
@@ -52,3 +57,33 @@ def verify_token(token: str):
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)):
+    """Retorna o usuário atual autenticado"""
+    # Sua lógica atual aqui
+    ...
+
+
+def require_admin(current_user: SystemUser = Depends(get_current_user)) -> SystemUser:
+    """
+    Dependency que verifica se o usuário é admin.
+    Levanta HTTPException 403 se não for.
+    """
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Only administrators can perform this action"
+        )
+    return current_user
+
+
+def require_active_user(current_user: SystemUser = Depends(get_current_user)) -> SystemUser:
+    """
+    Dependency que verifica se o usuário está ativo.
+    """
+    if not current_user.is_active:
+        raise HTTPException(
+            status_code=403,
+            detail="User account is inactive"
+        )
+    return current_user

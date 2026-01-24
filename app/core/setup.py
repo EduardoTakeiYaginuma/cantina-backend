@@ -6,9 +6,8 @@ from pathlib import Path
 def create_sample_data():
     """Create sample data for testing"""
     from database import get_db
-    from auth import get_password_hash
-    import models
-    
+    from app import models
+
     db = next(get_db())
     
     # Create sample customers
@@ -63,7 +62,7 @@ def main():
     print("🗄️ Creating database tables...")
     try:
         from database import engine
-        import models
+        from app import models
         models.Base.metadata.create_all(bind=engine)
         print("✅ Database tables created successfully!")
     except Exception as e:

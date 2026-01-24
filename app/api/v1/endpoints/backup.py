@@ -1,12 +1,12 @@
-# routers/backup.py
+# endpoints/backup.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 from dotenv import load_dotenv
 
-from routers.auth import get_current_user, get_current_active_admin  # ← NOVO
-from models import SystemUser, UserRole  # ← ATUALIZADO
-import schemas
-from utils.backup import BackupManager
+from app.api.v1.endpoints.auth import get_current_user, get_current_active_admin  # ← NOVO
+from app.models import SystemUser  # ← ATUALIZADO
+from app import schemas
+from app.services.backup import BackupManager
 
 # Load environment variables
 load_dotenv()

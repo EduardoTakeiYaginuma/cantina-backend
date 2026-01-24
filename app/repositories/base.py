@@ -1,9 +1,8 @@
 # repositories/base.py
 from typing import TypeVar, Generic, Type, Optional, List
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
 
-from models import Base
+from app.models import Base
 
 T = TypeVar('T', bound=Base)
 
