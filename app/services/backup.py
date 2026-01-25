@@ -4,13 +4,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict
 import gzip
+from dotenv import load_dotenv
 
+load_dotenv()
 
 class BackupManager:
     def __init__(self, backup_dir: str = None):
         if backup_dir is None:
-            project_root = Path(__file__).parent.parent.parent
-            backup_dir = project_root / "backups"
+            env_backup_dir = os.getenv("BACKUP_DIR")
+
+            if env_backup_dir:
+                backup_dir = env_backup_dir
+            else:
+                # Fallback: raiz do projeto
+                project_root = Path(__file__).parent.parent.parent
+                backup_dir = project_root / "backups"
         self.backup_dir = Path(backup_dir)
         self.backup_dir.mkdir(exist_ok=True)
 
