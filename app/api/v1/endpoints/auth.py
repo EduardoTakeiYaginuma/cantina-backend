@@ -23,7 +23,7 @@ from app.repositories import SystemUserRepository
 from app.models import SystemUser, UserRole
 from app import schemas
 
-router = APIRouter(prefix="/auth", tags=["authentication"])
+router = APIRouter()  # SEM prefix e tags (definido em v1/__init__.py)
 
 @router.post("/register", response_model=schemas.SystemUserResponse)
 def register_user(
