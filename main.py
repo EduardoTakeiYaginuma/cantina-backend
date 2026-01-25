@@ -4,7 +4,6 @@ from contextlib import asynccontextmanager
 
 from app import models
 from app.models import UserRole
-# Imports da estrutura app/
 from database import engine, get_db
 from dotenv import load_dotenv
 from fastapi import FastAPI

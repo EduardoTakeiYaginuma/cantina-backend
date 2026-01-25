@@ -1,15 +1,11 @@
-# app/core/security.py
-"""
-Funções de segurança: criptografia de senhas e gerenciamento de tokens JWT.
-Apenas funções puras - SEM dependencies do FastAPI.
-"""
+import os
 from datetime import datetime, timedelta
 from typing import Optional
+
+from dotenv import load_dotenv
+from fastapi import HTTPException, status
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import HTTPException, status
-import os
-from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -21,17 +17,14 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verifica se a senha em texto corresponde ao hash"""
     return pwd_context.verify(plain_password, hashed_password)
 
 
 def get_password_hash(password: str) -> str:
-    """Gera hash bcrypt da senha"""
     return pwd_context.hash(password)
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """Cria um token JWT"""
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
@@ -43,8 +36,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return encoded_jwt
 
 
-def verify_token(token: str) -> str:
-    """Verifica e decodifica o token JWT. Retorna o username"""
+def verify_token(token: str):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")

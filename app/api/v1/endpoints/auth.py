@@ -1,35 +1,27 @@
-# app/api/v1/endpoints/auth.py
-"""
-Endpoints de autenticação - API v1
-"""
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
+# endpoints/security.py
 from datetime import timedelta
 
-from database import get_db
-from app.core.security import (
-    verify_password,
-    create_access_token,
-    get_password_hash,
-    ACCESS_TOKEN_EXPIRE_MINUTES
-)
-from app.core.dependencies import (
-    authenticate_user,
-    get_current_user,
-    require_admin,
-)
-from app.repositories import SystemUserRepository
-from app.models import SystemUser, UserRole
-from app import schemas
+from fastapi import APIRouter
+from fastapi.security import OAuth2PasswordRequestForm
 
-router = APIRouter()  # SEM prefix e tags (definido em v1/__init__.py)
+from app import schemas
+from app.core import *
+from app.core.dependencies import *
+from app.models import SystemUser, UserRole
+from app.repositories import SystemUserRepository
+
+router = APIRouter(prefix="/auth", tags=["authentication"])
+
+
+# ============================================
+# Rotas
+# ============================================
 
 @router.post("/register", response_model=schemas.SystemUserResponse)
 def register_user(
         user: schemas.SystemUserCreate,
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(require_admin)
+        current_admin: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN pode criar usuários
 ):
     """
     Registra um novo usuário do sistema.
@@ -63,6 +55,7 @@ def login_for_access_token(
     """
     Login - gera token de acesso JWT
     """
+    print("achou endpoint")
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -119,7 +112,7 @@ def change_my_password(
 @router.get("/users", response_model=list[schemas.SystemUserResponse])
 def list_users(
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(require_admin)
+        current_admin: SystemUser = Depends(get_current_active_admin)
 ):
     """
     Lista todos os usuários do sistema.
@@ -133,7 +126,7 @@ def list_users(
 def deactivate_user(
         user_id: int,
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(require_admin)
+        current_admin: SystemUser = Depends(get_current_active_admin)
 ):
     """
     Desativa um usuário (soft delete).
@@ -160,7 +153,7 @@ def change_user_role(
         user_id: int,
         role_data: schemas.RoleChange,
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(require_admin)
+        current_admin: SystemUser = Depends(get_current_active_admin)
 ):
     """
     Muda o role de um usuário.

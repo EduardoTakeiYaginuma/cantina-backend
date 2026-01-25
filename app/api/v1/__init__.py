@@ -16,11 +16,11 @@ from .endpoints import (
 api_router = APIRouter()
 
 # Registrar todos os endpoints
-api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
-api_router.include_router(customers_router, prefix="/customers", tags=["customers"])
-api_router.include_router(produtos_router, prefix="/products", tags=["products"])
-api_router.include_router(sales_router, prefix="/sales", tags=["sales"])
-api_router.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
-api_router.include_router(backup_router, prefix="/backup", tags=["backup"])
+api_router.include_router(auth_router, tags=["auth"])
+api_router.include_router(customers_router, tags=["customers"])
+api_router.include_router(produtos_router, tags=["products"])
+api_router.include_router(sales_router, tags=["sales"])
+api_router.include_router(dashboard_router, tags=["dashboard"])
+api_router.include_router(backup_router, tags=["backup"])
 
 __all__ = ["api_router"]
