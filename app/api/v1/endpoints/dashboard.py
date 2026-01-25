@@ -6,7 +6,7 @@ from typing import List, Optional
 from datetime import date, timedelta
 
 from database import get_db
-from app.api.v1.endpoints.auth import get_current_user
+from app.core.dependencies import get_current_user
 from app.models import SystemUser, Customers, Produto, Sale, SaleItem, UsuarioTipo  # ← ATUALIZADO
 from app import schemas
 

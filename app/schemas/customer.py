@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Optional, List
 
-from models import UsuarioTipo
+from app.models import UsuarioTipo
 
 
 # ============================================

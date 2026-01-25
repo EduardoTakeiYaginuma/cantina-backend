@@ -10,7 +10,7 @@ from app import schemas
 from database import get_db
 from app.models import SystemUser, Produto, Sale, SaleItem, BalanceTransaction, Customers
 from app.repositories import CustomerRepository, ProdutoRepository
-from app.api.v1.endpoints.auth import get_current_user
+from app.core.dependencies import get_current_user
 
 router = APIRouter(prefix="/sales", tags=["sales"])
 
