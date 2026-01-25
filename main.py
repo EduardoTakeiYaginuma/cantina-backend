@@ -1,17 +1,18 @@
 # main.py
+import os
+from contextlib import asynccontextmanager
+
+from app import models
+from app.models import UserRole
+# Imports da estrutura app/
+from database import engine, get_db
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager  # ← NOVO
-import os
-from dotenv import load_dotenv
 
-from database import engine, get_db
-import models
-from app.api.v1.endpoints import auth
-from app.api.v1.endpoints import backup, dashboard, produtos, usuarios, sales
-from repositories import SystemUserRepository
-from models import UserRole
 from app.core.security import get_password_hash
+from app.repositories import SystemUserRepository
+from app.api.v1 import api_router as api_v1_router
 
 load_dotenv()
 
@@ -74,7 +75,9 @@ app = FastAPI(
     title="Cantina Swift Flow API",
     description="API para gerenciamento de cantina",
     version="1.0.0",
-    lifespan=lifespan  # ← NOVO:  Adicionar lifespan
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=lifespan
 )
 
 # Configure CORS
@@ -87,13 +90,8 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# Include endpoints
-app.include_router(auth.router)
-app.include_router(usuarios.router)
-app.include_router(produtos.router)
-app.include_router(sales.router)
-app.include_router(dashboard.router)
-app.include_router(backup.router)
+# Registrar routers
+app.include_router(api_v1_router, prefix="/api/v1")
 
 
 # ============================================
@@ -102,7 +100,13 @@ app.include_router(backup.router)
 
 @app.get("/")
 def read_root():
-    return {"message": "Cantina Swift Flow API", "version": "1.0.0"}
+    return {
+        "message": "Cantina Swift Flow API",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "redoc": "/redoc",
+        "api_v1": "/api/v1"
+    }
 
 
 @app.get("/health")
@@ -120,4 +124,9 @@ if __name__ == "__main__":
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", 8000))
 
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(
+        "main:app",
+        host=host,
+        port=port,
+        reload=True
+    )
