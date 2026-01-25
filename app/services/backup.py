@@ -9,7 +9,8 @@ import gzip
 class BackupManager:
     def __init__(self, backup_dir: str = None):
         if backup_dir is None:
-            backup_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "backups")
+            project_root = Path(__file__).parent.parent.parent
+            backup_dir = project_root / "backups"
         self.backup_dir = Path(backup_dir)
         self.backup_dir.mkdir(exist_ok=True)
 
