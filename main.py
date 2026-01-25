@@ -1,26 +1,85 @@
-from fastapi import FastAPI, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
+# main.py
 import os
-from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 
+from app import models
+from app.models import UserRole
 from database import engine, get_db
-import models
-from routers import auth, usuarios, produtos, sales, dashboard, backup
+from dotenv import load_dotenv
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-# Load environment variables
+from app.core.security import get_password_hash
+from app.repositories import SystemUserRepository
+from app.api.v1 import api_router as api_v1_router
+
 load_dotenv()
 
-# Create database tables
-models.Base.metadata.create_all(bind=engine)
+
+# ============================================
+# Lifespan Event Handler (Startup/Shutdown)
+# ============================================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Gerencia eventos de startup e shutdown do FastAPI
+    """
+    # STARTUP - Executado ao iniciar a aplicação
+    print("🚀 Starting Cantina Swift Flow API...")
+
+    # Criar tabelas
+    models.Base.metadata.create_all(bind=engine)
+    print("✅ Database tables created/verified")
+
+    # Criar usuário admin padrão
+    db = next(get_db())
+    try:
+        user_repo = SystemUserRepository(db)
+        admin_user = user_repo.get_by_username("admin")
+
+        if not admin_user:
+            hashed_password = get_password_hash("admin123")
+            admin_user = user_repo.create_user(
+                username="admin",
+                hashed_password=hashed_password,
+                role=UserRole.ADMIN
+            )
+            print("✅ Default admin user created (username: admin, password: admin123)")
+            print(f"   Role: {admin_user.role.value}")
+        else:
+            print(f"ℹ️  Admin user already exists (role: {admin_user.role.value})")
+
+    except Exception as e:
+        print(f"❌ Error creating default user: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+    print("🎉 Application startup complete!\n")
+
+    # Aplicação está rodando aqui (yield separa startup de shutdown)
+    yield
+
+    # SHUTDOWN - Executado ao parar a aplicação
+    print("\n👋 Shutting down Cantina Swift Flow API...")
+    print("✅ Cleanup completed")
+
+
+# ============================================
+# FastAPI App
+# ============================================
 
 app = FastAPI(
     title="Cantina Swift Flow API",
     description="API para gerenciamento de cantina",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=lifespan
 )
 
-# Configure CORS to allow network access
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -30,18 +89,23 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# Include routers
-app.include_router(auth.router)
-app.include_router(usuarios.router)
-app.include_router(produtos.router)
-app.include_router(sales.router)
-app.include_router(dashboard.router)
-app.include_router(backup.router)
+# Registrar routers
+app.include_router(api_v1_router, prefix="/api/v1")
 
+
+# ============================================
+# Routes
+# ============================================
 
 @app.get("/")
 def read_root():
-    return {"message": "Cantina Swift Flow API", "version": "1.0.0"}
+    return {
+        "message": "Cantina Swift Flow API",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "redoc": "/redoc",
+        "api_v1": "/api/v1"
+    }
 
 
 @app.get("/health")
@@ -49,35 +113,19 @@ def health_check():
     return {"status": "healthy"}
 
 
-# Create default admin user if it doesn't exist
-@app.on_event("startup")
-def create_default_user():
-    from auth import get_password_hash
-    
-    db = next(get_db())
-    
-    # Check if admin user exists
-    admin_user = db.query(models.User).filter(models.User.username == "admin").first()
-    
-    if not admin_user:
-        # Create default admin user
-        hashed_password = get_password_hash("admin123")
-        admin_user = models.User(
-            username="admin",
-            email="admin@cantina.com",
-            full_name="Administrator",
-            hashed_password=hashed_password,
-            is_active=True
-        )
-        db.add(admin_user)
-        db.commit()
-        print("✅ Default admin user created (username: admin, password: admin123)")
-    
-    db.close()
-
+# ============================================
+# Run
+# ============================================
 
 if __name__ == "__main__":
     import uvicorn
+
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host=host, port=port)
+
+    uvicorn.run(
+        "main:app",
+        host=host,
+        port=port,
+        reload=True
+    )

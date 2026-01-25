@@ -1,10 +1,11 @@
+import os
 from datetime import datetime, timedelta
 from typing import Optional
+
+from dotenv import load_dotenv
+from fastapi import HTTPException, status
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import HTTPException, status
-import os
-from dotenv import load_dotenv
 
 load_dotenv()
 
