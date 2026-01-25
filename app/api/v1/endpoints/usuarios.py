@@ -5,7 +5,7 @@ from sqlalchemy import func
 from typing import List, Optional
 
 from database import get_db
-from app.api.v1.endpoints.auth import get_current_user
+from app.core.dependencies import get_current_user
 from app.repositories import CustomerRepository  # ← NOVO
 from app.models import SystemUser, Customers, UsuarioTipo, BalanceTransaction, Sale  # ← ATUALIZADO
 from app import schemas

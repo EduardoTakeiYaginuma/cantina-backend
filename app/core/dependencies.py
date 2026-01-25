@@ -1,7 +1,6 @@
-# dependencies.py
+# app/core/dependencies.py
 """
-Dependencies do FastAPI para autenticação e autorização.
-Usa injeção de dependências (Depends).
+FastAPI Dependencies - Autenticação e Autorização
 """
 from typing import Optional
 from fastapi import Depends, HTTPException, status
@@ -11,10 +10,10 @@ from sqlalchemy.orm import Session
 from database import get_db
 from app.models import SystemUser, UserRole
 from app.repositories import SystemUserRepository
-from security import verify_password, verify_token
+from app.core.security import verify_password, verify_token
 
 # OAuth2 scheme
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 
 
 # ============================================

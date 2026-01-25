@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 from dotenv import load_dotenv
 
-from app.api.v1.endpoints.auth import get_current_user, get_current_active_admin  # ← NOVO
+from app.core.dependencies import get_current_user, require_admin
 from app.models import SystemUser  # ← ATUALIZADO
 from app import schemas
 from app.services.backup import BackupManager
@@ -23,7 +23,7 @@ backup_manager = BackupManager()
 
 @router.post("/create", response_model=schemas.BackupResponse)
 def create_backup(
-        current_admin: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
+        current_admin: SystemUser = Depends(require_admin)  # ← Apenas ADMIN
 ):
     """
     Cria um novo backup do banco de dados. 
@@ -60,7 +60,7 @@ def list_backups(
 @router.post("/restore/{filename}", response_model=schemas.BackupResponse)
 def restore_backup(
         filename: str,
-        current_admin: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
+        current_admin: SystemUser = Depends(require_admin)  # ← Apenas ADMIN
 ):
     """
     Restaura o banco de dados a partir de um backup.
@@ -92,7 +92,7 @@ def restore_backup(
 @router.delete("/delete/{filename}", response_model=schemas.BackupResponse)
 def delete_backup(
         filename: str,
-        current_admin: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
+        current_admin: SystemUser = Depends(require_admin)  # ← Apenas ADMIN
 ):
     """
     Deleta um arquivo de backup.
@@ -122,7 +122,7 @@ def delete_backup(
 
 @router.post("/clear-database", response_model=schemas.BackupResponse)
 def clear_database(
-        current_admin: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
+        current_admin: SystemUser = Depends(require_admin)  # ← Apenas ADMIN
 ):
     """
     Limpa todos os dados do banco (mantém a estrutura).
@@ -160,7 +160,7 @@ def get_auto_backup_status(
 @router.post("/download/{filename}")
 def download_backup(
         filename: str,
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_admin: SystemUser = Depends(require_admin)
 ):
     """
     Download de um arquivo de backup.

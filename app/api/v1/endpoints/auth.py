@@ -1,98 +1,35 @@
-# endpoints/security.py
+# app/api/v1/endpoints/auth.py
+"""
+Endpoints de autenticação - API v1
+"""
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import timedelta
-from typing import Optional
 
 from database import get_db
 from app.core.security import (
     verify_password,
     create_access_token,
-    verify_token,
     get_password_hash,
     ACCESS_TOKEN_EXPIRE_MINUTES
+)
+from app.core.dependencies import (
+    authenticate_user,
+    get_current_user,
+    require_admin,
 )
 from app.repositories import SystemUserRepository
 from app.models import SystemUser, UserRole
 from app import schemas
 
-router = APIRouter(prefix="/auth", tags=["authentication"])
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
-
-
-# ============================================
-# Funções Auxiliares
-# ============================================
-
-def get_user(db: Session, username: str) -> Optional[SystemUser]:
-    """Busca usuário por username usando Repository"""
-    user_repo = SystemUserRepository(db)
-    return user_repo.get_by_username(username)
-
-
-def authenticate_user(db: Session, username: str, password: str) -> Optional[SystemUser]:
-    """Autentica usuário verificando senha"""
-    user = get_user(db, username)
-    if not user:
-        return None
-    if not verify_password(password, user.hashed_password):
-        return None
-    if not user.is_active:
-        return None
-    return user
-
-
-def get_current_user(
-        token: str = Depends(oauth2_scheme),
-        db: Session = Depends(get_db)
-) -> SystemUser:
-    """Retorna o usuário atual baseado no token JWT"""
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-
-    username = verify_token(token)
-    if not username:
-        raise credentials_exception
-
-    user = get_user(db, username=username)
-    if user is None:
-        raise credentials_exception
-
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Inactive user"
-        )
-
-    return user
-
-
-def get_current_active_admin(
-        current_user: SystemUser = Depends(get_current_user)
-) -> SystemUser:
-    """Verifica se o usuário atual é ADMIN"""
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not enough permissions.  Admin role required."
-        )
-    return current_user
-
-
-# ============================================
-# Rotas
-# ============================================
+router = APIRouter()  # SEM prefix e tags (definido em v1/__init__.py)
 
 @router.post("/register", response_model=schemas.SystemUserResponse)
 def register_user(
         user: schemas.SystemUserCreate,
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN pode criar usuários
+        current_admin: SystemUser = Depends(require_admin)
 ):
     """
     Registra um novo usuário do sistema.
@@ -182,7 +119,7 @@ def change_my_password(
 @router.get("/users", response_model=list[schemas.SystemUserResponse])
 def list_users(
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_admin: SystemUser = Depends(require_admin)
 ):
     """
     Lista todos os usuários do sistema.
@@ -196,7 +133,7 @@ def list_users(
 def deactivate_user(
         user_id: int,
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_admin: SystemUser = Depends(require_admin)
 ):
     """
     Desativa um usuário (soft delete).
@@ -223,7 +160,7 @@ def change_user_role(
         user_id: int,
         role_data: schemas.RoleChange,
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_admin: SystemUser = Depends(require_admin)
 ):
     """
     Muda o role de um usuário.
