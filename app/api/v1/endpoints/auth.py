@@ -1,12 +1,14 @@
 # endpoints/security.py
 from datetime import timedelta
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+from starlette import status
 
 from app import schemas
 from app.core import *
-from app.core.dependencies import *
+from app.core.dependencies import get_db, get_current_active_admin, get_current_user
 from app.models import SystemUser, UserRole
 from app.repositories import SystemUserRepository
 
@@ -55,7 +57,6 @@ def login_for_access_token(
     """
     Login - gera token de acesso JWT
     """
-    print("achou endpoint")
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -171,5 +172,28 @@ def change_user_role(
     user = user_repo.change_role(user_id, role_data.new_role)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    return user
+
+@router.put("/users/{user_id}/password", response_model=schemas.SystemUserResponse)
+def admin_change_user_password(
+    user_id: int,
+    password_data: schemas.PasswordChange,
+    db: Session = Depends(get_db),
+    current_admin: SystemUser = Depends(get_current_active_admin)
+):
+    """
+    Permite que um admin altere a senha de outro usuário.
+    """
+    user_repo = SystemUserRepository(db)
+    user = user_repo.get_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # if user.id == current_admin.id:
+    #     raise HTTPException(status_code=400, detail="Cannot change your own password via this endpoint")
+
+    user.hashed_password = get_password_hash(password_data.new_password)
+    user_repo.update(user)
 
     return user
