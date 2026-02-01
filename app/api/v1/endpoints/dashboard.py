@@ -32,7 +32,7 @@ def get_dashboard_stats(
     # Total de clientes (sem equipe)
     total_clientes = db.query(func.count(Customers.id)).filter(
         and_(
-            Customers.tipo == UsuarioTipo.CLIENTE,
+            Customers.tipo == UsuarioTipo.ACAMPANTE,
             Customers.is_active == True
         )
     ).scalar() or 0

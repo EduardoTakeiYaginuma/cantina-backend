@@ -148,6 +148,23 @@ def deactivate_user(
 
     return {"message": "User deactivated successfully"}
 
+@router.put("/users/{user_id}/activate")
+def activate_user(
+        user_id: int,
+        db: Session = Depends(get_db),
+        current_admin: SystemUser = Depends(get_current_active_admin)
+):
+    """
+    Ativa um usuário previamente desativado.
+    Apenas administradores podem ativar usuários.
+    """
+    user_repo = SystemUserRepository(db)
+
+    user = user_repo.activate_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return {"message": "User activated successfully"}
 
 @router.put("/users/{user_id}/role", response_model=schemas.SystemUserResponse)
 def change_user_role(
@@ -173,12 +190,12 @@ def change_user_role(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    return user
+    return {"message": "User role changed successfully"}
 
 @router.put("/users/{user_id}/password", response_model=schemas.SystemUserResponse)
 def admin_change_user_password(
     user_id: int,
-    password_data: schemas.PasswordChange,
+    password_data: schemas.AdminPasswordChange,
     db: Session = Depends(get_db),
     current_admin: SystemUser = Depends(get_current_active_admin)
 ):
@@ -196,4 +213,4 @@ def admin_change_user_password(
     user.hashed_password = get_password_hash(password_data.new_password)
     user_repo.update(user)
 
-    return user
+    return {"message": "Password updated successfully"}
