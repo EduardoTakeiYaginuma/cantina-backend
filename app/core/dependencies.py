@@ -30,12 +30,24 @@ def get_user(db: Session, username: str) -> Optional[SystemUser]:
 def authenticate_user(db: Session, username: str, password: str) -> Optional[SystemUser]:
     """Autentica usuário verificando senha"""
     user = get_user(db, username)
+
+    # Não deixa usuários com login incorreto logarem
     if not user:
-        return None
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     if not verify_password(password, user.hashed_password):
         return None
+
+    # Não deixa usuário desativados logarem
     if not user.is_active:
-        return None
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Inactive user",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return user
 
 
