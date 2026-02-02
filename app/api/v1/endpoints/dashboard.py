@@ -7,7 +7,7 @@ from datetime import date, timedelta
 
 from database import get_db
 from app.core.dependencies import get_current_user
-from app.models import SystemUser, Customers, Produto, Sale, SaleItem, UsuarioTipo  # ← ATUALIZADO
+from app.models import SystemUser, Customers, Produto, Sale, SaleItem, UsuarioTipo
 from app import schemas
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -80,7 +80,6 @@ def get_dashboard_stats(
 
     return schemas.DashboardStats(
         total_customers=total_customers,
-        total_clientes=total_clientes,
         total_equipe=total_equipe,
         total_produtos=total_produtos,
         low_stock_produtos=low_stock_produtos,

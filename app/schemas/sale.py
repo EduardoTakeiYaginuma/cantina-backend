@@ -63,10 +63,14 @@ class SaleResponse(BaseModel):
 class RecentSale(BaseModel):
     """Schema para vendas recentes (dashboard)"""
     id: int
-    usuario_nome: str
+    customer_nome: str
+    customer_nickname: str
+    customer_tipo: str
     produtos: str
+    total_items: int
     total_amount: float
     created_at: datetime
+    created_by_username: str
 
     class Config:
         from_attributes = True

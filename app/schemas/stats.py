@@ -13,7 +13,6 @@ from typing import Optional
 class DashboardStats(BaseModel):
     """Estatísticas gerais do dashboard"""
     total_customers: int
-    total_acampantes: int
     total_equipe: int
     total_produtos: int
     low_stock_produtos: int

@@ -61,6 +61,8 @@ class LowStockProduto(BaseModel):
     id: int
     nome: str
     estoque: int
+    estoque_minimo: int
+    valor: float
 
     class Config:
         from_attributes = True
