@@ -2,7 +2,7 @@
 from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-from app.models import Customers, UsuarioTipo
+from app.models import Customers, CustomerTipo
 from app.repositories.base import BaseRepository
 
 
@@ -27,7 +27,7 @@ class CustomerRepository(BaseRepository[Customers]):
             )
         ).all()
 
-    def get_by_tipo(self, tipo: UsuarioTipo) -> List[Customers]:
+    def get_by_tipo(self, tipo: CustomerTipo) -> List[Customers]:
         """Busca clientes por tipo (CLIENTE ou EQUIPE)"""
         return self.db.query(Customers).filter(
             Customers.tipo == tipo

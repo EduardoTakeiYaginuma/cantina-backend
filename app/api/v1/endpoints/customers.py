@@ -1,4 +1,4 @@
-# endpoints/usuarios.py
+# endpoints/customers.py
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -7,10 +7,10 @@ from typing import List, Optional
 from database import get_db
 from app.core.dependencies import get_current_user
 from app.repositories import CustomerRepository  # ← NOVO
-from app.models import SystemUser, Customers, UsuarioTipo, BalanceTransaction, Sale  # ← ATUALIZADO
+from app.models import SystemUser, Customers, CustomerTipo, BalanceTransaction, Sale  # ← ATUALIZADO
 from app import schemas
 
-router = APIRouter(prefix="/customers", tags=["customers"])  # ← Mudei para /customers
+router = APIRouter(prefix="/customers", tags=["customers"])
 
 
 # ============================================
@@ -39,7 +39,7 @@ def create_customer(
         nickname=customer.nickname,
         quarto=customer.quarto,
         saldo=customer.saldo or 0.0,
-        tipo=customer.tipo or UsuarioTipo.ACAMPANTE,
+        tipo=customer.tipo or CustomerTipo.ACAMPANTE,
         nome_pai=customer.nome_pai,
         nome_mae=customer.nome_mae
     )
@@ -52,7 +52,7 @@ def read_customers(
         skip: int = 0,
         limit: int = 100,
         search: Optional[str] = Query(None, description="Buscar por nome ou nickname"),
-        tipo: Optional[UsuarioTipo] = Query(None, description="Filtrar por tipo"),
+        tipo: Optional[CustomerTipo] = Query(None, description="Filtrar por tipo"),
         db: Session = Depends(get_db),
         current_user: SystemUser = Depends(get_current_user)
 ):

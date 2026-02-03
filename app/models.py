@@ -30,7 +30,7 @@ class UserRole(str, enum.Enum):
     OPERADOR = "operador"
 
 
-class UsuarioTipo(str, enum.Enum):
+class CustomerTipo(str, enum.Enum):
     """Tipos de COMPRADORES"""
     ACAMPANTE = "acampante"
     EQUIPE = "equipe"
@@ -69,7 +69,7 @@ class Customers(Base):
     nickname = Column(String(255), unique=True, index=True, nullable=False)
     quarto = Column(String(100))
     saldo = Column(Float, default=0.0)
-    tipo = Column(Enum(UsuarioTipo), default=UsuarioTipo.ACAMPANTE, nullable=False)
+    tipo = Column(Enum(CustomerTipo), default=CustomerTipo.ACAMPANTE, nullable=False)
     nome_pai = Column(String(255))
     nome_mae = Column(String(255))
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -82,7 +82,7 @@ class Customers(Base):
     @hybrid_property
     def allow_negative_balance(self) -> bool:
         """Verifica se o usuário pode ter saldo negativo"""
-        return self.tipo == UsuarioTipo. EQUIPE
+        return self.tipo == CustomerTipo. EQUIPE
 
     def can_purchase(self, amount: float) -> bool:
         """Verifica se pode realizar uma compra"""

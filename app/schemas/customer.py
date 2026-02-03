@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Optional, List
 
-from app.models import UsuarioTipo
+from app.models import CustomerTipo
 
 
 # ============================================
@@ -25,7 +25,7 @@ class CustomerBase(BaseModel):
 class CustomerCreate(CustomerBase):
     """Schema para criar Customer"""
     saldo: Optional[float] = 0.0
-    tipo: Optional[UsuarioTipo] = UsuarioTipo.ACAMPANTE
+    tipo: Optional[CustomerTipo] = CustomerTipo.ACAMPANTE
 
 
 class CustomerUpdate(BaseModel):
@@ -33,7 +33,7 @@ class CustomerUpdate(BaseModel):
     nome: Optional[str] = Field(None, min_length=2, max_length=255)
     nickname: Optional[str] = Field(None, min_length=2, max_length=255)
     quarto: Optional[str] = Field(None, max_length=100)
-    tipo: Optional[UsuarioTipo] = None
+    tipo: Optional[CustomerTipo] = None
     nome_pai: Optional[str] = Field(None, max_length=255)
     nome_mae: Optional[str] = Field(None, max_length=255)
 
@@ -42,7 +42,7 @@ class CustomerResponse(CustomerBase):
     """Schema para retornar Customer"""
     id: int
     saldo: float
-    tipo: UsuarioTipo
+    tipo: CustomerTipo
     is_active: bool
     created_at: datetime
 

@@ -7,7 +7,7 @@ from datetime import date, timedelta
 
 from database import get_db
 from app.core.dependencies import get_current_user
-from app.models import SystemUser, Customers, Produto, Sale, SaleItem, UsuarioTipo
+from app.models import SystemUser, Customers, Produto, Sale, SaleItem, CustomerTipo
 from app import schemas
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -32,7 +32,7 @@ def get_dashboard_stats(
     # Total de clientes (sem equipe)
     total_clientes = db.query(func.count(Customers.id)).filter(
         and_(
-            Customers.tipo == UsuarioTipo.ACAMPANTE,
+            Customers.tipo == CustomerTipo.ACAMPANTE,
             Customers.is_active == True
         )
     ).scalar() or 0
@@ -40,7 +40,7 @@ def get_dashboard_stats(
     # Total de equipe
     total_equipe = db.query(func.count(Customers.id)).filter(
         and_(
-            Customers.tipo == UsuarioTipo.EQUIPE,
+            Customers.tipo == CustomerTipo.EQUIPE,
             Customers.is_active == True
         )
     ).scalar() or 0

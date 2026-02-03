@@ -4,7 +4,7 @@ Routers da API - Sistema Cantina.
 Importa todos os routers dos endpoints.
 """
 from .auth import router as auth_router
-from .usuarios import router as customers_router
+from .customers import router as customers_router
 from .produtos import router as produtos_router
 from .sales import router as sales_router
 from .dashboard import router as dashboard_router
