@@ -4,7 +4,7 @@ Schemas relacionados a clientes/compradores.
 """
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional
 
 from app.models import CustomerTipo
 
