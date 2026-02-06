@@ -82,7 +82,7 @@ class Customers(Base):
     @hybrid_property
     def allow_negative_balance(self) -> bool:
         """Verifica se o usuário pode ter saldo negativo"""
-        return self.tipo == CustomerTipo. EQUIPE
+        return self.tipo == CustomerTipo.EQUIPE
 
     def can_purchase(self, amount: float) -> bool:
         """Verifica se pode realizar uma compra"""
