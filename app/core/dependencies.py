@@ -39,7 +39,11 @@ def authenticate_user(db: Session, username: str, password: str) -> Optional[Sys
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not verify_password(password, user.hashed_password):
-        return None
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     # Não deixa usuário desativados logarem
     if not user.is_active:
