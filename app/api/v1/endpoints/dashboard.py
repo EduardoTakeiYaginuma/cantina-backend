@@ -111,7 +111,7 @@ def get_recent_sales(
     for sale in sales:
         # Resumo dos produtos
         produtos = [item.produto.nome for item in sale.items]
-        produto_summary = ", ".join(produtos[: 2])  # Primeiros 2 produtos
+        produto_summary = ", ".join(produtos[:2])  # Primeiros 2 produtos
         if len(produtos) > 2:
             produto_summary += f" e mais {len(produtos) - 2}"
 
