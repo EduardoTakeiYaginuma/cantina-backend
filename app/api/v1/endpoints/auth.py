@@ -1,4 +1,4 @@
-# endpoints/security.py
+# app/api/v1/endpoints/auth.py
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
