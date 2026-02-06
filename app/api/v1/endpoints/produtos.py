@@ -108,7 +108,7 @@ def update_produto(
             )
 
     # Atualizar campos
-    update_data = produto_update.dict(exclude_unset=True)
+    update_data = produto_update.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(produto, field, value)
 

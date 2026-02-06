@@ -6,8 +6,8 @@ from typing import List, Optional
 
 from database import get_db
 from app.core.dependencies import get_current_user
-from app.repositories import CustomerRepository  # ← NOVO
-from app.models import SystemUser, Customers, CustomerTipo, BalanceTransaction, Sale  # ← ATUALIZADO
+from app.repositories import CustomerRepository
+from app.models import SystemUser, Customers, CustomerTipo, BalanceTransaction, Sale
 from app import schemas
 
 router = APIRouter(prefix="/customers", tags=["customers"])
@@ -21,19 +21,15 @@ router = APIRouter(prefix="/customers", tags=["customers"])
 def create_customer(
         customer: schemas.CustomerCreate,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_user)  # ← SystemUser
+        current_user: SystemUser = Depends(get_current_user)
 ):
-    """Cria um novo acampante/comprador"""
     customer_repo = CustomerRepository(db)
 
     # Verificar se nickname já existe
     if customer_repo.nickname_exists(customer.nickname):
-        raise HTTPException(
-            status_code=400,
-            detail="Nickname já existe"
-        )
+        raise HTTPException(status_code=409, detail="Nickname já existe")
 
-    # Criar customer
+    # Criar novo cliente
     db_customer = Customers(
         nome=customer.nome,
         nickname=customer.nickname,
@@ -47,14 +43,14 @@ def create_customer(
     return customer_repo.create(db_customer)
 
 
+
 @router.get("/", response_model=List[schemas.CustomerResponse])
 def read_customers(
         skip: int = 0,
         limit: int = 100,
         search: Optional[str] = Query(None, description="Buscar por nome ou nickname"),
         tipo: Optional[CustomerTipo] = Query(None, description="Filtrar por tipo"),
-        db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_user)
+        db: Session = Depends(get_db)
 ):
     """Lista todos os clientes com filtros opcionais"""
     customer_repo = CustomerRepository(db)
@@ -108,7 +104,7 @@ def update_customer(
             )
 
     # Atualizar campos
-    update_data = customer_update.dict(exclude_unset=True)
+    update_data = customer_update.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(customer, field, value)
 
@@ -121,7 +117,6 @@ def delete_customer(
         db: Session = Depends(get_db),
         current_user: SystemUser = Depends(get_current_user)
 ):
-    """Deleta um cliente (soft delete - apenas desativa)"""
     customer_repo = CustomerRepository(db)
     customer = customer_repo.get_by_id(customer_id)
 
@@ -228,7 +223,6 @@ def get_balance_history(
         "customer_nome": customer.nome,
         "saldo_atual": customer.saldo,
         "tipo": customer.tipo.value,
-        "pode_saldo_negativo": customer.allow_negative_balance,
         "historico": transactions
     }
 
@@ -262,7 +256,6 @@ def get_customer_sales_summary(
         "customer_nome": customer.nome,
         "tipo": customer.tipo.value,
         "saldo_atual": customer.saldo,
-        "pode_saldo_negativo": customer.allow_negative_balance,
         "total_vendas": sales_summary.total_vendas or 0,
         "total_gasto": float(sales_summary.total_gasto or 0),
         "gasto_medio": float(sales_summary.gasto_medio or 0)

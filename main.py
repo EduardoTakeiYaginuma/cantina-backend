@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.security import get_password_hash
+from app.core.exceptions import register_exception_handlers
 from app.repositories import SystemUserRepository
 from app.api.v1 import api_router as api_v1_router
 
@@ -78,6 +79,11 @@ app = FastAPI(
     redoc_url="/redoc",
     lifespan=lifespan
 )
+
+# ============================================
+# Exception Handlers
+# ============================================
+register_exception_handlers(app)
 
 # Configure CORS
 app.add_middleware(

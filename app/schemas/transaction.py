@@ -97,5 +97,4 @@ class BalanceHistoryResponse(BaseModel):
     customer_nome: str
     saldo_atual: float
     tipo: str
-    pode_saldo_negativo: bool
     historico: List[BalanceTransactionResponse]
