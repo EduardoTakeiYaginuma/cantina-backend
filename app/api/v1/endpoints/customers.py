@@ -48,15 +48,22 @@ def create_customer(
 def read_customers(
         skip: int = 0,
         limit: int = 100,
-        search: Optional[str] = Query(None, description="Buscar por nome ou nickname"),
+        nome: Optional[str] = Query(None, description="Buscar por nome"),
+        nickname: Optional[str] = Query(None, description="Buscar por ou nickname"),
         tipo: Optional[CustomerTipo] = Query(None, description="Filtrar por tipo"),
+        customer_id: Optional[int] = Query(None, description="Buscar por ID"),
         db: Session = Depends(get_db)
 ):
     """Lista todos os clientes com filtros opcionais"""
     customer_repo = CustomerRepository(db)
 
-    if search:
-        customers = customer_repo.search(search)
+    if customer_id is not None:
+        customer = customer_repo.get_by_id(customer_id)
+        return [customer] if customer else []
+    elif nome:
+        customers = customer_repo.search(nome)
+    elif nickname:
+        customers = customer_repo.get_by_nickname(nickname)
     elif tipo:
         customers = customer_repo.get_by_tipo(tipo)
     else:
