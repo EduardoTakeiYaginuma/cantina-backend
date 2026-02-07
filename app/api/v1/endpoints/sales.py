@@ -23,7 +23,7 @@ router = APIRouter(prefix="/sales", tags=["sales"])
 def create_sale(
         sale: schemas.SaleCreate,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_user)  # ← SystemUser
+        current_user: SystemUser = Depends(get_current_user)
 ):
     """Cria uma nova venda"""
     customer_repo = CustomerRepository(db)
