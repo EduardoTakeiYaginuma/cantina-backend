@@ -17,7 +17,7 @@ router = APIRouter(prefix="/produtos", tags=["produtos"])
 # CRUD de Produtos
 # ============================================
 
-@router.post("/", response_model=schemas.ProdutoResponse)
+@router.post("", response_model=schemas.ProdutoResponse)
 def create_produto(
         produto: schemas.ProdutoCreate,
         db: Session = Depends(get_db),
@@ -44,7 +44,7 @@ def create_produto(
     return produto_repo.create(db_produto)
 
 
-@router.get("/", response_model=List[schemas.ProdutoResponse])
+@router.get("", response_model=List[schemas.ProdutoResponse])
 def read_produtos(
         skip: int = 0,
         limit: int = 100,

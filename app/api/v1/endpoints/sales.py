@@ -19,7 +19,7 @@ router = APIRouter(prefix="/sales", tags=["sales"])
 # CRUD de Vendas
 # ============================================
 
-@router.post("/", response_model=schemas.SaleResponse)
+@router.post("", response_model=schemas.SaleResponse)
 def create_sale(
         sale: schemas.SaleCreate,
         db: Session = Depends(get_db),
@@ -125,7 +125,7 @@ def create_sale(
     return db_sale
 
 
-@router.get("/", response_model=List[schemas.SaleResponse])
+@router.get("", response_model=List[schemas.SaleResponse])
 def read_sales(
         skip: int = 0,
         limit: int = 100,
