@@ -17,7 +17,7 @@ router = APIRouter(prefix="/customers", tags=["customers"])
 # CRUD de Customers
 # ============================================
 
-@router.post("/", response_model=schemas.CustomerResponse)
+@router.post("", response_model=schemas.CustomerResponse)
 def create_customer(
         customer: schemas.CustomerCreate,
         db: Session = Depends(get_db),
@@ -44,7 +44,7 @@ def create_customer(
 
 
 
-@router.get("/", response_model=List[schemas.CustomerResponse])
+@router.get("", response_model=List[schemas.CustomerResponse])
 def read_customers(
         skip: int = 0,
         limit: int = 100,

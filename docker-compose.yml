@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  cantina-api:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: cantina-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mapear código para desenvolvimento (remover em produção)
+      - .:/app
+      # Persistir banco de dados
+      - ./cantina.db:/app/cantina.db
+      # Persistir backups
+      - ./backups:/app/backups
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+

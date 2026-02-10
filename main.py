@@ -118,6 +118,10 @@ def read_root():
 def health_check():
     return {"status": "healthy"}
 
+@app.get("/_health")
+async def internal_health_check():
+    """Health check interno para Cloud Run"""
+    return {"status": "ok"}
 
 # ============================================
 # Run

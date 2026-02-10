@@ -159,7 +159,7 @@ def activate_user(
 
     return {"message": "User activated successfully"}
 
-@router.put("/users/{user_id}/role", response_model=schemas.SystemUserResponse)
+@router.put("/users/{user_id}/role")
 def change_user_role(
         user_id: int,
         role_data: schemas.RoleChange,
@@ -185,7 +185,7 @@ def change_user_role(
 
     return {"message": "User role changed successfully"}
 
-@router.put("/users/{user_id}/password", response_model=schemas.SystemUserResponse)
+@router.put("/users/{user_id}/password")
 def admin_change_user_password(
     user_id: int,
     password_data: schemas.AdminPasswordChange,
