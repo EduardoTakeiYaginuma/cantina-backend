@@ -36,13 +36,15 @@ class SystemUserRepository(BaseRepository[SystemUser]):
         ).first() is not None
 
     def create_user(self, username: str, hashed_password: str,
-                    role: UserRole = UserRole.OPERADOR) -> SystemUser:
+                    role: UserRole = UserRole.OPERADOR,
+                    created_by_id: Optional[int] = None) -> SystemUser:
         """Cria um novo usuário do sistema"""
         user = SystemUser(
             username=username,
             hashed_password=hashed_password,
             role=role,
-            is_active=True
+            is_active=True,
+            created_by_id=created_by_id
         )
         return self.create(user)
 

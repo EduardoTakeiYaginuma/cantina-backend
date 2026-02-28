@@ -71,6 +71,22 @@ from .backup import (
     BackupResponse,
 )
 
+# Audit
+from .audit import (
+    AuditLogBase,
+    CustomerAuditLogResponse,
+    ProductAuditLogResponse,
+    SystemUserAuditLogResponse,
+    AuditActivityResponse,
+    AuditStatsResponse,
+    RecentActivityItem,
+    RecentActivityResponse,
+    AuditLogResponse,
+    AuditFilterParams,
+    UnifiedAuditLogResponse,
+    AuditLogsPagedResponse,
+)
+
 __all__ = [
     # User & Auth
     "SystemUserBase",
@@ -118,4 +134,17 @@ __all__ = [
     # Backup
     "BackupInfo",
     "BackupResponse",
+    # Audit
+    "AuditLogBase",
+    "CustomerAuditLogResponse",
+    "ProductAuditLogResponse",
+    "SystemUserAuditLogResponse",
+    "AuditActivityResponse",
+    "AuditStatsResponse",
+    "RecentActivityItem",
+    "RecentActivityResponse",
+    "AuditLogResponse",
+    "AuditFilterParams",
+    "UnifiedAuditLogResponse",
+    "AuditLogsPagedResponse",
 ]

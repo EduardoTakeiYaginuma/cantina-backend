@@ -51,10 +51,17 @@ class SaleResponse(BaseModel):
     created_at: datetime
     items: List[SaleItemResponse]
 
+    # Status de cancelamento
+    is_cancelled: bool = False
+    cancelled_at: Optional[datetime] = None
+    cancelled_by_id: Optional[int] = None
+    cancellation_reason: Optional[str] = None
+
     # Campos extras
     customer_nome: Optional[str] = None
     customer_nickname: Optional[str] = None
     created_by_username: Optional[str] = None
+    cancelled_by_username: Optional[str] = None
 
     class Config:
         from_attributes = True
