@@ -48,12 +48,22 @@ class SystemUser(Base):
     hashed_password = Column(String(255), nullable=False)
     role = Column(Enum(UserRole), default=UserRole.OPERADOR, nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
-    # Relacionamentos reversos
-    sales_created = relationship("Sale", back_populates="created_by")
+    # Campos de auditoria
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_by_id = Column(Integer, ForeignKey("system_users.id"))
+    updated_at = Column(DateTime, onupdate=lambda: datetime.now(timezone.utc))
+    updated_by_id = Column(Integer, ForeignKey("system_users.id"))
+
+    # Relacionamentos reversos (especificando foreign_keys para evitar ambiguidade)
+    sales_created = relationship("Sale", foreign_keys="Sale.created_by_id", back_populates="created_by")
+    sales_cancelled = relationship("Sale", foreign_keys="Sale.cancelled_by_id", back_populates="cancelled_by")
     balance_transactions_created = relationship("BalanceTransaction", back_populates="created_by")
     restocks_created = relationship("Restock", back_populates="created_by")
+
+    # Relacionamentos de auditoria (self-referencing)
+    created_by = relationship("SystemUser", foreign_keys=lambda: [SystemUser.created_by_id], remote_side=lambda: [SystemUser.id], backref="users_created")
+    updated_by = relationship("SystemUser", foreign_keys=lambda: [SystemUser.updated_by_id], remote_side=lambda: [SystemUser.id], backref="users_updated")
 
 
 # ============================================
@@ -72,12 +82,19 @@ class Customers(Base):
     tipo = Column(Enum(CustomerTipo), default=CustomerTipo.ACAMPANTE, nullable=False)
     nome_pai = Column(String(255))
     nome_mae = Column(String(255))
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     is_active = Column(Boolean, default=True)
+
+    # Campos de auditoria
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_by_id = Column(Integer, ForeignKey("system_users.id"))
+    updated_at = Column(DateTime, onupdate=lambda: datetime.now(timezone.utc))
+    updated_by_id = Column(Integer, ForeignKey("system_users.id"))
 
     # Relationships
     sales = relationship("Sale", back_populates="customer")
     balance_transactions = relationship("BalanceTransaction", back_populates="customer")
+    created_by = relationship("SystemUser", foreign_keys=lambda: [Customers.created_by_id], backref="customers_created")
+    updated_by = relationship("SystemUser", foreign_keys=lambda: [Customers.updated_by_id], backref="customers_updated")
 
     @hybrid_property
     def allow_negative_balance(self) -> bool:
@@ -104,11 +121,18 @@ class Produto(Base):
     estoque = Column(Integer, default=0)
     estoque_minimo = Column(Integer, default=10)
     is_active = Column(Boolean, default=True)
+
+    # Campos de auditoria
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_by_id = Column(Integer, ForeignKey("system_users.id"))
+    updated_at = Column(DateTime, onupdate=lambda: datetime.now(timezone.utc))
+    updated_by_id = Column(Integer, ForeignKey("system_users.id"))
 
     # Relationships
     sale_items = relationship("SaleItem", back_populates="produto")
     restocks = relationship("Restock", back_populates="produto")
+    created_by = relationship("SystemUser", foreign_keys=lambda: [Produto.created_by_id], backref="produtos_created")
+    updated_by = relationship("SystemUser", foreign_keys=lambda: [Produto.updated_by_id], backref="produtos_updated")
 
 
 # ============================================
@@ -124,9 +148,16 @@ class Sale(Base):
     total_amount = Column(Float, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
-    # Relationships
+    # Soft delete / Cancelamento
+    is_cancelled = Column(Boolean, default=False, nullable=False, index=True)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancelled_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+    cancellation_reason = Column(Text, nullable=True)
+
+    # Relationships (especificando foreign_keys explicitamente)
     customer = relationship("Customers", back_populates="sales")
-    created_by = relationship("SystemUser", back_populates="sales_created")
+    created_by = relationship("SystemUser", foreign_keys=[created_by_id], back_populates="sales_created")
+    cancelled_by = relationship("SystemUser", foreign_keys=[cancelled_by_id], back_populates="sales_cancelled")
     items = relationship("SaleItem", back_populates="sale", cascade="all, delete-orphan")
 
 

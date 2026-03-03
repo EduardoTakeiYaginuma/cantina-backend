@@ -9,6 +9,7 @@ from .produtos import router as produtos_router
 from .sales import router as sales_router
 from .dashboard import router as dashboard_router
 from .backup import router as backup_router
+from .audit import router as audit_router
 
 __all__ = [
     "auth_router",
@@ -17,4 +18,5 @@ __all__ = [
     "sales_router",
     "dashboard_router",
     "backup_router",
+    "audit_router",
 ]

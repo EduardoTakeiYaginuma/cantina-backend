@@ -1,13 +1,43 @@
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-pydantic==2.5.0
-sqlalchemy==2.0.23
-alembic==1.12.1
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-bcrypt==4.1.2
-python-multipart==0.0.6
-python-dotenv==1.0.0
-pytest==7.4.3
-pytest-asyncio==0.21.1
-httpx==0.25.2
+# ============================================
+# FRAMEWORK WEB E SERVIDOR
+# ============================================
+fastapi==0.104.1  # Framework web moderno para APIs REST (rápido e com validação automática)
+uvicorn[standard]==0.24.0  # Servidor ASGI para rodar a aplicação FastAPI
+
+# ============================================
+# VALIDAÇÃO DE DADOS
+# ============================================
+pydantic==2.5.0  # Validação de dados e serialização (schemas, modelos de request/response)
+
+# ============================================
+# BANCO DE DADOS
+# ============================================
+sqlalchemy==2.0.23  # ORM para trabalhar com banco de dados SQL (SQLite, PostgreSQL, MySQL)
+alembic==1.12.1  # Migrações de banco de dados (versionamento do schema)
+
+# ============================================
+# AUTENTICAÇÃO E SEGURANÇA
+# ============================================
+python-jose[cryptography]==3.3.0  # Criação e validação de tokens JWT (autenticação)
+passlib[bcrypt]==1.7.4  # Hashing de senhas (criptografia segura)
+bcrypt==4.1.2  # Algoritmo bcrypt para hash de senhas
+
+# ============================================
+# UPLOAD DE ARQUIVOS E VARIÁVEIS DE AMBIENTE
+# ============================================
+python-multipart==0.0.6  # Suporte para upload de arquivos (form-data)
+python-dotenv==1.0.0  # Carregar variáveis de ambiente de arquivo .env
+
+# ============================================
+# TESTES
+# ============================================
+pytest==7.4.3  # Framework de testes unitários e de integração
+pytest-asyncio==0.21.1  # Suporte para testar funções assíncronas
+httpx==0.25.2  # Cliente HTTP para testes de API (alternativa ao requests)
+
+# ============================================
+# EXPORTAÇÃO DE DADOS (OPCIONAIS)
+# ============================================
+openpyxl==3.1.2  # Criar e ler arquivos Excel (.xlsx) - usado para exportar relatórios formatados
+reportlab==4.0.7  # Gerar arquivos PDF - usado para exportar relatórios formais e compliance
+

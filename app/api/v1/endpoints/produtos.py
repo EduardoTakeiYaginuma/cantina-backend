@@ -5,10 +5,12 @@ from sqlalchemy import func
 from typing import List, Optional
 
 from database import get_db
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, get_current_active_admin
 from app.repositories import ProdutoRepository  # ← NOVO
 from app.models import SystemUser, Produto, SaleItem, Restock  # ← ATUALIZADO
 from app import schemas
+from app.services.audit import AuditService, get_changed_fields
+from app.models_audit import AuditAction
 
 router = APIRouter(prefix="/produtos", tags=["produtos"])
 
@@ -21,7 +23,7 @@ router = APIRouter(prefix="/produtos", tags=["produtos"])
 def create_produto(
         produto: schemas.ProdutoCreate,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_user)  # ← SystemUser
+        current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
 ):
     """Cria um novo produto"""
     produto_repo = ProdutoRepository(db)
@@ -38,10 +40,28 @@ def create_produto(
         nome=produto.nome,
         valor=produto.valor,
         estoque=produto.estoque or 0,
-        estoque_minimo=produto.estoque_minimo or 10
+        estoque_minimo=produto.estoque_minimo or 10,
+        created_by_id=current_user.id  # ← Registra quem criou
     )
 
-    return produto_repo.create(db_produto)
+    created_produto = produto_repo.create(db_produto)
+
+    # 🆕 AUDITORIA: Registrar criação
+    audit = AuditService(db)
+    audit.log_product_action(
+        produto_id=created_produto.id,
+        action=AuditAction.CREATE,
+        created_by_id=current_user.id,
+        new_values={
+            "nome": created_produto.nome,
+            "valor": created_produto.valor,
+            "estoque": created_produto.estoque,
+            "estoque_minimo": created_produto.estoque_minimo
+        },
+        description=f"Produto criado por {current_user.username}"
+    )
+
+    return created_produto
 
 
 @router.get("", response_model=List[schemas.ProdutoResponse])
@@ -90,9 +110,11 @@ def update_produto(
         produto_id: int,
         produto_update: schemas.ProdutoUpdate,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_user)
+        current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
 ):
     """Atualiza dados de um produto"""
+    from datetime import datetime, timezone
+
     produto_repo = ProdutoRepository(db)
     produto = produto_repo.get_by_id(produto_id)
 
@@ -107,38 +129,106 @@ def update_produto(
                 detail="Produto com este nome já existe"
             )
 
-    # Atualizar campos
+    # 🆕 AUDITORIA: Detectar mudanças
     update_data = produto_update.model_dump(exclude_unset=True)
+    old_values, new_values = get_changed_fields(produto, update_data)
+
+    # Atualizar campos
     for field, value in update_data.items():
         setattr(produto, field, value)
 
-    return produto_repo.update(produto)
+    # Registrar quem e quando atualizou
+    produto.updated_by_id = current_user.id
+    produto.updated_at = datetime.now(timezone.utc)
+
+    updated_produto = produto_repo.update(produto)
+
+    # 🆕 AUDITORIA: Registrar mudanças
+    if old_values:
+        audit = AuditService(db)
+
+        # Se mudou o preço, registrar ação ESPECIAL de mudança de preço
+        if "valor" in old_values:
+            audit.log_product_action(
+                produto_id=produto_id,
+                action=AuditAction.PRICE_CHANGE,
+                created_by_id=current_user.id,
+                old_values={"valor": old_values["valor"]},
+                new_values={"valor": new_values["valor"]},
+                description=f"Preço alterado de R${old_values['valor']:.2f} para R${new_values['valor']:.2f} por {current_user.username}"
+            )
+
+        # Se mudou outras coisas, registrar como UPDATE
+        other_changes = {k: v for k, v in old_values.items() if k != "valor"}
+        if other_changes:
+            audit.log_product_action(
+                produto_id=produto_id,
+                action=AuditAction.UPDATE,
+                created_by_id=current_user.id,
+                old_values=other_changes,
+                new_values={k: new_values[k] for k in other_changes.keys()},
+                description=f"Produto atualizado por {current_user.username}"
+            )
+
+    return updated_produto
 
 
 @router.delete("/{produto_id}")
 def delete_produto(
         produto_id: int,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_user)
+        current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
 ):
-    """Deleta um produto (soft delete - apenas desativa)"""
+    """
+    Deleta um produto (soft delete - apenas desativa).
+    NUNCA remove o produto do banco de dados para manter integridade referencial.
+    """
+    from datetime import datetime, timezone
+
     produto_repo = ProdutoRepository(db)
     produto = produto_repo.get_by_id(produto_id)
 
     if produto is None:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
 
-    # Verificar se tem vendas
-    has_sales = db.query(SaleItem).filter(SaleItem.produto_id == produto_id).first()
-    if has_sales:
-        # Soft delete - apenas desativa
-        produto.is_active = False
-        produto_repo.update(produto)
-        return {"message": "Produto desativado (possui histórico de vendas)"}
+    # Verificar se já está desativado
+    if not produto.is_active:
+        raise HTTPException(status_code=400, detail="Produto já está desativado")
 
-    # Hard delete se não tiver vendas
-    produto_repo.delete(produto_id)
-    return {"message": "Produto excluído com sucesso"}
+    # Verificar histórico para mensagem informativa
+    has_sales = db.query(SaleItem).filter(SaleItem.produto_id == produto_id).first()
+    has_restocks = db.query(Restock).filter(Restock.produto_id == produto_id).first()
+
+    # Determinar motivo da desativação para a mensagem
+    reasons = []
+    if has_sales:
+        reasons.append("vendas")
+    if has_restocks:
+        reasons.append("reabastecimentos")
+
+    reason_text = " e ".join(reasons) if reasons else "manter histórico"
+
+    # SEMPRE soft delete (desativa)
+    produto.is_active = False
+    produto.updated_by_id = current_user.id
+    produto.updated_at = datetime.now(timezone.utc)
+    produto_repo.update(produto)
+
+    # 🆕 AUDITORIA: Registrar desativação
+    audit = AuditService(db)
+    audit.log_product_action(
+        produto_id=produto_id,
+        action=AuditAction.DEACTIVATE,
+        created_by_id=current_user.id,
+        old_values={"is_active": True},
+        new_values={"is_active": False},
+        description=f"Produto desativado por {current_user.username} ({reason_text})"
+    )
+
+    return {
+        "message": f"Produto desativado com sucesso ({reason_text})",
+        "is_active": False
+    }
 
 
 # ============================================
@@ -150,7 +240,7 @@ def restock_produto(
         produto_id: int,
         restock_data: schemas.RestockCreate,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_user)
+        current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN para reabastecer
 ):
     """Reabastece o estoque de um produto"""
     produto_repo = ProdutoRepository(db)
@@ -290,3 +380,90 @@ def get_produtos_summary(
         "produtos_estoque_baixo": produtos_estoque_baixo,
         "valor_total_estoque": float(valor_total_estoque or 0)
     }
+
+
+# ============================================
+# Auditoria
+# ============================================
+
+@router.get("/{produto_id}/history")
+def get_product_history(
+        produto_id: int,
+        limit: int = Query(50, description="Número máximo de registros"),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """
+    Retorna o histórico completo de mudanças do produto.
+    Mostra todas as ações realizadas (criação, edições, mudanças de preço, ativação/desativação).
+    """
+    # Verificar se produto existe
+    produto_repo = ProdutoRepository(db)
+    produto = produto_repo.get_by_id(produto_id)
+    if not produto:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+
+    # Buscar histórico de auditoria
+    audit = AuditService(db)
+    history = audit.get_product_history(produto_id, limit=limit)
+
+    # Formatar resposta
+    return {
+        "produto_id": produto_id,
+        "produto_nome": produto.nome,
+        "total_actions": len(history),
+        "history": [
+            {
+                "id": log.id,
+                "action": log.action.value,
+                "created_at": log.created_at,
+                "created_by": log.created_by.username,
+                "old_values": log.old_values,
+                "new_values": log.new_values,
+                "description": log.description
+            }
+            for log in history
+        ]
+    }
+
+
+@router.get("/{produto_id}/price-history")
+def get_product_price_history(
+        produto_id: int,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """
+    Retorna o histórico de mudanças de preço do produto.
+    Útil para rastrear ajustes de preço ao longo do tempo.
+    """
+    # Verificar se produto existe
+    produto_repo = ProdutoRepository(db)
+    produto = produto_repo.get_by_id(produto_id)
+    if not produto:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+
+    # Buscar apenas mudanças de preço
+    audit = AuditService(db)
+    price_changes = audit.get_price_changes(produto_id)
+
+    # Formatar resposta
+    return {
+        "produto_id": produto_id,
+        "produto_nome": produto.nome,
+        "valor_atual": produto.valor,
+        "total_price_changes": len(price_changes),
+        "price_history": [
+            {
+                "id": log.id,
+                "created_at": log.created_at,
+                "created_by": log.created_by.username,
+                "old_price": log.old_values.get("valor") if log.old_values else None,
+                "new_price": log.new_values.get("valor") if log.new_values else None,
+                "description": log.description
+            }
+            for log in price_changes
+        ]
+    }
+
+
