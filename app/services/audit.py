@@ -226,6 +226,103 @@ class AuditService:
         return logs
 
     # ============================================
+    # MÉTODOS PARA VENDAS
+    # ============================================
+
+    def log_sale_create(
+        self,
+        sale_id: int,
+        customer_id: int,
+        customer_nome: str,
+        customer_nickname: str,
+        total_amount: float,
+        items_count: int,
+        items: list,
+        old_customer_balance: float,
+        new_customer_balance: float,
+        created_by_id: int
+    ):
+        """
+        Registra a criação de uma venda.
+        """
+        log = SaleAuditLog(
+            sale_id=sale_id,
+            action=AuditAction.CREATE,
+            created_by_id=created_by_id,
+            old_values={},
+            new_values={
+                "customer_id": customer_id,
+                "customer_nome": customer_nome,
+                "customer_nickname": customer_nickname,
+                "total_amount": total_amount,
+                "items_count": items_count,
+                "items": items,
+                "old_customer_balance": old_customer_balance,
+                "new_customer_balance": new_customer_balance
+            },
+            description=f"Sale create - Sale ID: {sale_id}"
+        )
+        self.db.add(log)
+        self.db.commit()
+        return log
+
+    def log_sale_cancel(
+        self,
+        sale_id: int,
+        customer_id: int,
+        customer_nome: str,
+        total_amount: float,
+        reason: str,
+        old_customer_balance: float,
+        new_customer_balance: float,
+        created_by_id: int
+    ):
+        """
+        Registra o cancelamento de uma venda.
+        """
+        log = SaleAuditLog(
+            sale_id=sale_id,
+            action=AuditAction.DELETE,  # Cancelar = DELETE lógico
+            created_by_id=created_by_id,
+            old_values={
+                "total_amount": total_amount,
+                "customer_balance": old_customer_balance
+            },
+            new_values={
+                "is_cancelled": True,
+                "cancellation_reason": reason,
+                "customer_balance": new_customer_balance,
+                "refunded_amount": total_amount
+            },
+            description=f"Sale cancelled - Sale ID: {sale_id}, Reason: {reason}"
+        )
+        self.db.add(log)
+        self.db.commit()
+        return log
+
+    def get_sale_history(
+        self,
+        sale_id: int,
+        limit: int = 50
+    ):
+        """Busca histórico de uma venda específica"""
+        from app.models import SystemUser
+
+        logs = self.db.query(SaleAuditLog)\
+            .filter(SaleAuditLog.sale_id == sale_id)\
+            .order_by(SaleAuditLog.created_at.desc())\
+            .limit(limit)\
+            .all()
+
+        # Popular created_by_username
+        for log in logs:
+            if log.created_by_id:
+                user = self.db.query(SystemUser).filter(SystemUser.id == log.created_by_id).first()
+                log.created_by_username = user.username if user else None
+
+        return logs
+
+    # ============================================
     # MÉTODO GENÉRICO (para entidades não específicas como Sale)
     # ============================================
 

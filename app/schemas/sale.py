@@ -42,6 +42,11 @@ class SaleCreate(BaseModel):
     items: List[SaleItemCreate] = Field(...)
 
 
+class SaleCancellation(BaseModel):
+    """Schema para cancelar venda"""
+    reason: str = Field(..., min_length=5, max_length=500, description="Motivo do cancelamento")
+
+
 class SaleResponse(BaseModel):
     """Schema para retornar venda"""
     id: int

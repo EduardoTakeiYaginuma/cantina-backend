@@ -41,6 +41,7 @@ from .sale import (
     SaleItemCreate,
     SaleItemResponse,
     SaleCreate,
+    SaleCancellation,
     SaleResponse,
     RecentSale,
 )
@@ -115,6 +116,7 @@ __all__ = [
     "SaleItemCreate",
     "SaleItemResponse",
     "SaleCreate",
+    "SaleCancellation",
     "SaleResponse",
     "RecentSale",
     # Transaction
