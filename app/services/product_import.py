@@ -263,6 +263,7 @@ def rollback_import_batch(
         Dict com resultado do rollback
     """
     from datetime import datetime, timezone
+    from app.core.timezone import get_now
 
     # Buscar batch
     import_batch = db.query(ProductImportBatch).filter(ProductImportBatch.id == batch_id).first()
@@ -333,7 +334,7 @@ def rollback_import_batch(
 
     # Atualizar batch
     import_batch.status = "rolled_back"
-    import_batch.rolled_back_at = datetime.now(timezone.utc)
+    import_batch.rolled_back_at = get_now()
     import_batch.rolled_back_by_id = user.id
 
     db.commit()

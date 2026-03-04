@@ -1,8 +1,6 @@
-# models.py - VERSÃO FINAL CORRIGIDA
-
+﻿# models.py - VERSAO FINAL CORRIGIDA
 import enum
-from datetime import datetime, timezone
-
+from datetime import datetime
 from sqlalchemy import (
     Boolean,
     Column,
@@ -17,15 +15,17 @@ from sqlalchemy import (
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship
-
 Base = declarative_base()
-
+# Helper function para evitar circular import
+def _get_now():
+    from app.core.timezone import get_now
+    return get_now()
 # ============================================
 # ENUMS
 # ============================================
 
 class UserRole(str, enum.Enum):
-    """Níveis de acesso ao SISTEMA"""
+    """NÃ­veis de acesso ao SISTEMA"""
     ADMIN = "admin"
     OPERADOR = "operador"
 
@@ -43,7 +43,7 @@ class ProductType(str, enum.Enum):
     SALGADINHO = "salgadinho"
 
 # ============================================
-# TABELA 1: Usuários do Sistema (Login)
+# TABELA 1: UsuÃ¡rios do Sistema (Login)
 # ============================================
 
 class SystemUser(Base):
@@ -57,9 +57,9 @@ class SystemUser(Base):
     is_active = Column(Boolean, default=True)
 
     # Campos de auditoria
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=_get_now)
     created_by_id = Column(Integer, ForeignKey("system_users.id"))
-    updated_at = Column(DateTime, onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, onupdate=_get_now)
     updated_by_id = Column(Integer, ForeignKey("system_users.id"))
 
     # Relacionamentos reversos (especificando foreign_keys para evitar ambiguidade)
@@ -92,9 +92,9 @@ class Customers(Base):
     is_active = Column(Boolean, default=True)
 
     # Campos de auditoria
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=_get_now)
     created_by_id = Column(Integer, ForeignKey("system_users.id"))
-    updated_at = Column(DateTime, onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, onupdate=_get_now)
     updated_by_id = Column(Integer, ForeignKey("system_users.id"))
 
     # Relationships
@@ -105,7 +105,7 @@ class Customers(Base):
 
     @hybrid_property
     def allow_negative_balance(self) -> bool:
-        """Verifica se o usuário pode ter saldo negativo"""
+        """Verifica se o usuÃ¡rio pode ter saldo negativo"""
         return self.tipo == CustomerTipo.EQUIPE
 
     def can_purchase(self, amount: float) -> bool:
@@ -130,13 +130,13 @@ class Produto(Base):
     estoque_minimo = Column(Integer, default=10)
     is_active = Column(Boolean, default=True)
 
-    # Rastreamento de importação
+    # Rastreamento de importaÃ§Ã£o
     import_batch_id = Column(Integer, ForeignKey("product_import_batches.id"), nullable=True)
 
     # Campos de auditoria
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=_get_now)
     created_by_id = Column(Integer, ForeignKey("system_users.id"))
-    updated_at = Column(DateTime, onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, onupdate=_get_now)
     updated_by_id = Column(Integer, ForeignKey("system_users.id"))
 
     # Relationships
@@ -158,7 +158,7 @@ class Sale(Base):
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
     total_amount = Column(Float, nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=_get_now)
 
     # Soft delete / Cancelamento
     is_cancelled = Column(Boolean, default=False, nullable=False, index=True)
@@ -203,7 +203,7 @@ class Restock(Base):
     produto_id = Column(Integer, ForeignKey("produtos.id"), nullable=False)
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     quantity = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=_get_now)
 
     # Relationships
     produto = relationship("Produto", back_populates="restocks")
@@ -211,7 +211,7 @@ class Restock(Base):
 
 
 # ============================================
-# TABELA 7: Transações de Saldo
+# TABELA 7: TransaÃ§Ãµes de Saldo
 # ============================================
 
 class BalanceTransaction(Base):
@@ -223,7 +223,7 @@ class BalanceTransaction(Base):
     amount = Column(Float, nullable=False)
     transaction_type = Column(String(50), nullable=False)
     description = Column(Text)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=_get_now)
 
     # Relationships
     customer = relationship("Customers", back_populates="balance_transactions")
@@ -231,11 +231,11 @@ class BalanceTransaction(Base):
 
 
 # ============================================
-# TABELA 8: Configuração de Evento
+# TABELA 8: ConfiguraÃ§Ã£o de Evento
 # ============================================
 
 class EventConfig(Base):
-    """Configurações do evento atual, incluindo nome e lista de quartos"""
+    """ConfiguraÃ§Ãµes do evento atual, incluindo nome e lista de quartos"""
     __tablename__ = "event_config"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -243,9 +243,9 @@ class EventConfig(Base):
     is_active = Column(Boolean, default=True, nullable=False)
 
     # Campos de auditoria
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=_get_now)
     created_by_id = Column(Integer, ForeignKey("system_users.id"))
-    updated_at = Column(DateTime, onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, onupdate=_get_now)
     updated_by_id = Column(Integer, ForeignKey("system_users.id"))
 
     # Relationships
@@ -259,7 +259,7 @@ class EventConfig(Base):
 # ============================================
 
 class EventRoom(Base):
-    """Quartos disponíveis no evento"""
+    """Quartos disponÃ­veis no evento"""
     __tablename__ = "event_rooms"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -267,11 +267,11 @@ class EventRoom(Base):
     room_name = Column(String(100), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
 
-    # Ordem de exibição
+    # Ordem de exibiÃ§Ã£o
     display_order = Column(Integer, default=0)
 
     # Campos de auditoria
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=_get_now)
     created_by_id = Column(Integer, ForeignKey("system_users.id"))
 
     # Relationships
@@ -280,11 +280,11 @@ class EventRoom(Base):
 
 
 # ============================================
-# TABELA: Rastreamento de Importações
+# TABELA: Rastreamento de ImportaÃ§Ãµes
 # ============================================
 
 class ProductImportBatch(Base):
-    """Rastreia lotes de importação de produtos para permitir rollback"""
+    """Rastreia lotes de importaÃ§Ã£o de produtos para permitir rollback"""
     __tablename__ = "product_import_batches"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -295,7 +295,7 @@ class ProductImportBatch(Base):
     status = Column(String(50), default="completed")  # completed, rolled_back
 
     # Auditoria
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=_get_now)
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     rolled_back_at = Column(DateTime, nullable=True)
     rolled_back_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
@@ -306,7 +306,7 @@ class ProductImportBatch(Base):
     products = relationship("Produto", back_populates="import_batch")
 
 
-# Atualizar modelo Produto para incluir rastreamento de importação
+# Atualizar modelo Produto para incluir rastreamento de importaÃ§Ã£o
 # (Adicionar na classe Produto existente)
 
 

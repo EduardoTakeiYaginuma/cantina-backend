@@ -69,3 +69,32 @@ class LowStockProduto(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ============================================
+# Restock Schemas
+# ============================================
+
+class RestockItemResponse(BaseModel):
+    """Schema para item de reabastecimento"""
+    id: int
+    produto_id: int
+    produto_nome: str
+    quantity: int
+    created_at: datetime
+    created_by_id: int
+    created_by_username: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AllRestocksResponse(BaseModel):
+    """Schema para histórico completo de reabastecimentos"""
+    total_restocks: int
+    showing: int
+    skip: int
+    limit: int
+    filters_applied: dict
+    restocks: list[RestockItemResponse]
+

@@ -3,9 +3,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
+from datetime import datetime, timedelta
 
 from database import get_db
 from app.core.dependencies import get_current_user, get_current_active_admin
+from app.core.timezone import get_now
 from app.repositories import ProdutoRepository  # ← NOVO
 from app.models import SystemUser, Produto, SaleItem, Restock  # ← ATUALIZADO
 from app import schemas
@@ -38,6 +40,7 @@ def create_produto(
     # Criar produto
     db_produto = Produto(
         nome=produto.nome,
+        tipo=produto.tipo,  # ← Adicionar tipo
         valor=produto.valor,
         estoque=produto.estoque or 0,
         estoque_minimo=produto.estoque_minimo or 10,
@@ -54,6 +57,7 @@ def create_produto(
         created_by_id=current_user.id,
         new_values={
             "nome": created_produto.nome,
+            "tipo": created_produto.tipo.value if created_produto.tipo else None,
             "valor": created_produto.valor,
             "estoque": created_produto.estoque,
             "estoque_minimo": created_produto.estoque_minimo
@@ -113,8 +117,6 @@ def update_produto(
         current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
 ):
     """Atualiza dados de um produto"""
-    from datetime import datetime, timezone
-
     produto_repo = ProdutoRepository(db)
     produto = produto_repo.get_by_id(produto_id)
 
@@ -139,7 +141,7 @@ def update_produto(
 
     # Registrar quem e quando atualizou
     produto.updated_by_id = current_user.id
-    produto.updated_at = datetime.now(timezone.utc)
+    # updated_at será automaticamente atualizado pelo SQLAlchemy
 
     updated_produto = produto_repo.update(produto)
 
@@ -183,8 +185,6 @@ def delete_produto(
     Deleta um produto (soft delete - apenas desativa).
     NUNCA remove o produto do banco de dados para manter integridade referencial.
     """
-    from datetime import datetime, timezone
-
     produto_repo = ProdutoRepository(db)
     produto = produto_repo.get_by_id(produto_id)
 
@@ -211,7 +211,7 @@ def delete_produto(
     # SEMPRE soft delete (desativa)
     produto.is_active = False
     produto.updated_by_id = current_user.id
-    produto.updated_at = datetime.now(timezone.utc)
+    # updated_at será automaticamente atualizado pelo SQLAlchemy
     produto_repo.update(produto)
 
     # 🆕 AUDITORIA: Registrar desativação
@@ -302,6 +302,113 @@ def get_restock_history(
         "estoque_atual": produto.estoque,
         "estoque_minimo": produto.estoque_minimo,
         "historico_reabastecimento": restocks
+    }
+
+
+@router.get("/restock/history")
+def get_all_restocks_history(
+        skip: int = Query(0, ge=0, description="Número de registros para pular"),
+        limit: int = Query(50, ge=1, le=500, description="Número máximo de registros"),
+        produto_id: Optional[int] = Query(None, description="Filtrar por ID do produto"),
+        created_by_id: Optional[int] = Query(None, description="Filtrar por ID do usuário que fez o reabastecimento"),
+        date_from: Optional[datetime] = Query(None, description="Data inicial (YYYY-MM-DD ou ISO)"),
+        date_to: Optional[datetime] = Query(None, description="Data final (YYYY-MM-DD ou ISO)"),
+        order_by: str = Query("created_at_desc", description="Ordenação: created_at_desc, created_at_asc, quantity_desc, quantity_asc"),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """
+    📦 **Histórico Completo de Reabastecimentos**
+
+    Lista todos os reabastecimentos realizados no sistema com filtros avançados.
+
+    **Filtros Disponíveis:**
+    - `produto_id`: Filtrar por produto específico
+    - `created_by_id`: Filtrar por usuário que realizou o reabastecimento
+    - `date_from`: Data inicial do período
+    - `date_to`: Data final do período
+    - `order_by`: Ordenação dos resultados
+
+    **Opções de Ordenação:**
+    - `created_at_desc`: Mais recentes primeiro (padrão)
+    - `created_at_asc`: Mais antigos primeiro
+    - `quantity_desc`: Maior quantidade primeiro
+    - `quantity_asc`: Menor quantidade primeiro
+
+    **Uso:**
+    - Ver todos os reabastecimentos recentes
+    - Auditar quem fez reabastecimentos
+    - Acompanhar entrada de estoque ao longo do tempo
+    - Relatórios de movimentação de estoque
+
+    **Retorna:**
+    - Lista paginada de reabastecimentos
+    - Informações do produto
+    - Quem realizou o reabastecimento
+    - Estatísticas e filtros aplicados
+    """
+    # Iniciar query
+    query = db.query(Restock)
+
+    # Aplicar filtros
+    if produto_id:
+        query = query.filter(Restock.produto_id == produto_id)
+
+    if created_by_id:
+        query = query.filter(Restock.created_by_id == created_by_id)
+
+    if date_from:
+        query = query.filter(Restock.created_at >= date_from)
+
+    if date_to:
+        date_to_end = date_to + timedelta(days=1, seconds=-1)
+        query = query.filter(Restock.created_at <= date_to_end)
+
+    # Contar total antes da paginação
+    total_restocks = query.count()
+
+    # Aplicar ordenação
+    if order_by == "created_at_asc":
+        query = query.order_by(Restock.created_at.asc())
+    elif order_by == "quantity_desc":
+        query = query.order_by(Restock.quantity.desc())
+    elif order_by == "quantity_asc":
+        query = query.order_by(Restock.quantity.asc())
+    else:  # created_at_desc (padrão)
+        query = query.order_by(Restock.created_at.desc())
+
+    # Aplicar paginação
+    restocks = query.offset(skip).limit(limit).all()
+
+    # Enriquecer dados com informações do produto e usuário
+    restocks_data = []
+    for restock in restocks:
+        produto = db.query(Produto).filter(Produto.id == restock.produto_id).first()
+        user = db.query(SystemUser).filter(SystemUser.id == restock.created_by_id).first()
+
+        restocks_data.append({
+            "id": restock.id,
+            "produto_id": restock.produto_id,
+            "produto_nome": produto.nome if produto else f"Produto #{restock.produto_id}",
+            "quantity": restock.quantity,
+            "created_at": restock.created_at,
+            "created_by_id": restock.created_by_id,
+            "created_by_username": user.username if user else "Desconhecido"
+        })
+
+    return {
+        "total_restocks": total_restocks,
+        "showing": len(restocks_data),
+        "skip": skip,
+        "limit": limit,
+        "filters_applied": {
+            "produto_id": produto_id,
+            "created_by_id": created_by_id,
+            "date_from": date_from.isoformat() if date_from else None,
+            "date_to": date_to.isoformat() if date_to else None,
+            "order_by": order_by
+        },
+        "restocks": restocks_data
     }
 
 
