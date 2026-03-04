@@ -5,6 +5,7 @@ Schemas relacionados a produtos.
 from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Optional
+from app.models import ProductType
 
 
 # ============================================
@@ -15,6 +16,7 @@ class ProdutoBase(BaseModel):
     """Schema base para Produto"""
     nome: str = Field(..., min_length=2, max_length=255)
     valor: float = Field(..., gt=0, description="Valor deve ser maior que zero")
+    tipo: Optional[ProductType] = Field(None, description="Tipo do produto: BEBIDA, DOCE ou SALGADINHO")
 
 
 class ProdutoCreate(ProdutoBase):
@@ -27,6 +29,7 @@ class ProdutoUpdate(BaseModel):
     """Schema para atualizar Produto"""
     nome: Optional[str] = Field(None, min_length=2, max_length=255)
     valor: Optional[float] = Field(None, gt=0)
+    tipo: Optional[ProductType] = Field(None, description="Tipo do produto")
     estoque: Optional[int] = Field(None, ge=0)
     estoque_minimo: Optional[int] = Field(None, ge=0)
 
@@ -66,3 +69,32 @@ class LowStockProduto(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ============================================
+# Restock Schemas
+# ============================================
+
+class RestockItemResponse(BaseModel):
+    """Schema para item de reabastecimento"""
+    id: int
+    produto_id: int
+    produto_nome: str
+    quantity: int
+    created_at: datetime
+    created_by_id: int
+    created_by_username: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AllRestocksResponse(BaseModel):
+    """Schema para histórico completo de reabastecimentos"""
+    total_restocks: int
+    showing: int
+    skip: int
+    limit: int
+    filters_applied: dict
+    restocks: list[RestockItemResponse]
+

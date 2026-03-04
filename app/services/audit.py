@@ -226,6 +226,97 @@ class AuditService:
         return logs
 
     # ============================================
+    # MÉTODOS PARA SISTEMA (AÇÕES GERAIS)
+    # ============================================
+
+    def log_system_action(
+        self,
+        action: AuditAction,
+        created_by_id: int,
+        entity_type: Optional[str] = None,
+        entity_id: Optional[int] = None,
+        old_values: Optional[Dict[str, Any]] = None,
+        new_values: Optional[Dict[str, Any]] = None,
+        description: Optional[str] = None
+    ):
+        """
+        Registra uma ação geral do sistema.
+
+        Usado para ações que não se encaixam em entidades específicas:
+        - Importações em massa
+        - Rollbacks
+        - Backups
+        - Manutenções do sistema
+
+        Exemplo de uso:
+            audit.log_system_action(
+                action=AuditAction.IMPORT,
+                created_by_id=current_user.id,
+                entity_type="product_batch",
+                entity_id=batch.id,
+                new_values={
+                    "filename": "produtos_2026.xlsx",
+                    "imported_count": 25,
+                    "skipped_count": 2
+                },
+                description="Importação em massa de 25 produtos"
+            )
+        """
+        from app.models_audit import SystemAuditLog
+
+        log = SystemAuditLog(
+            action=action,
+            created_by_id=created_by_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            old_values=old_values,
+            new_values=new_values,
+            description=description
+        )
+        self.db.add(log)
+        self.db.commit()
+        return log
+
+    def get_system_action_history(
+        self,
+        entity_type: Optional[str] = None,
+        entity_id: Optional[int] = None,
+        action: Optional[AuditAction] = None,
+        limit: int = 50
+    ):
+        """
+        Busca histórico de ações do sistema.
+
+        Pode filtrar por:
+        - entity_type: Tipo de entidade (ex: "product_batch")
+        - entity_id: ID específico da entidade
+        - action: Tipo de ação específica
+        """
+        from app.models_audit import SystemAuditLog
+        from app.models import SystemUser
+
+        query = self.db.query(SystemAuditLog)
+
+        if entity_type:
+            query = query.filter(SystemAuditLog.entity_type == entity_type)
+
+        if entity_id:
+            query = query.filter(SystemAuditLog.entity_id == entity_id)
+
+        if action:
+            query = query.filter(SystemAuditLog.action == action)
+
+        logs = query.order_by(SystemAuditLog.created_at.desc()).limit(limit).all()
+
+        # Popular created_by_username
+        for log in logs:
+            if log.created_by_id:
+                user = self.db.query(SystemUser).filter(SystemUser.id == log.created_by_id).first()
+                log.created_by_username = user.username if user else None
+
+        return logs
+
+    # ============================================
     # MÉTODOS PARA VENDAS
     # ============================================
 

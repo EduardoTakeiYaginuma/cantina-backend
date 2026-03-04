@@ -1,11 +1,13 @@
-# endpoints/produtos.py
-from fastapi import APIRouter, Depends, HTTPException, Query
+﻿# endpoints/produtos.py
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
+from datetime import datetime, timedelta
 
 from database import get_db
 from app.core.dependencies import get_current_user, get_current_active_admin
+from app.core.timezone import get_now
 from app.repositories import ProdutoRepository  # ← NOVO
 from app.models import SystemUser, Produto, SaleItem, Restock  # ← ATUALIZADO
 from app import schemas
@@ -38,6 +40,7 @@ def create_produto(
     # Criar produto
     db_produto = Produto(
         nome=produto.nome,
+        tipo=produto.tipo,  # ← Adicionar tipo
         valor=produto.valor,
         estoque=produto.estoque or 0,
         estoque_minimo=produto.estoque_minimo or 10,
@@ -54,6 +57,7 @@ def create_produto(
         created_by_id=current_user.id,
         new_values={
             "nome": created_produto.nome,
+            "tipo": created_produto.tipo.value if created_produto.tipo else None,
             "valor": created_produto.valor,
             "estoque": created_produto.estoque,
             "estoque_minimo": created_produto.estoque_minimo
@@ -113,8 +117,6 @@ def update_produto(
         current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
 ):
     """Atualiza dados de um produto"""
-    from datetime import datetime, timezone
-
     produto_repo = ProdutoRepository(db)
     produto = produto_repo.get_by_id(produto_id)
 
@@ -139,7 +141,7 @@ def update_produto(
 
     # Registrar quem e quando atualizou
     produto.updated_by_id = current_user.id
-    produto.updated_at = datetime.now(timezone.utc)
+    # updated_at será automaticamente atualizado pelo SQLAlchemy
 
     updated_produto = produto_repo.update(produto)
 
@@ -183,8 +185,6 @@ def delete_produto(
     Deleta um produto (soft delete - apenas desativa).
     NUNCA remove o produto do banco de dados para manter integridade referencial.
     """
-    from datetime import datetime, timezone
-
     produto_repo = ProdutoRepository(db)
     produto = produto_repo.get_by_id(produto_id)
 
@@ -211,7 +211,7 @@ def delete_produto(
     # SEMPRE soft delete (desativa)
     produto.is_active = False
     produto.updated_by_id = current_user.id
-    produto.updated_at = datetime.now(timezone.utc)
+    # updated_at será automaticamente atualizado pelo SQLAlchemy
     produto_repo.update(produto)
 
     # 🆕 AUDITORIA: Registrar desativação
@@ -302,6 +302,113 @@ def get_restock_history(
         "estoque_atual": produto.estoque,
         "estoque_minimo": produto.estoque_minimo,
         "historico_reabastecimento": restocks
+    }
+
+
+@router.get("/restock/history")
+def get_all_restocks_history(
+        skip: int = Query(0, ge=0, description="Número de registros para pular"),
+        limit: int = Query(50, ge=1, le=500, description="Número máximo de registros"),
+        produto_id: Optional[int] = Query(None, description="Filtrar por ID do produto"),
+        created_by_id: Optional[int] = Query(None, description="Filtrar por ID do usuário que fez o reabastecimento"),
+        date_from: Optional[datetime] = Query(None, description="Data inicial (YYYY-MM-DD ou ISO)"),
+        date_to: Optional[datetime] = Query(None, description="Data final (YYYY-MM-DD ou ISO)"),
+        order_by: str = Query("created_at_desc", description="Ordenação: created_at_desc, created_at_asc, quantity_desc, quantity_asc"),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """
+    📦 **Histórico Completo de Reabastecimentos**
+
+    Lista todos os reabastecimentos realizados no sistema com filtros avançados.
+
+    **Filtros Disponíveis:**
+    - `produto_id`: Filtrar por produto específico
+    - `created_by_id`: Filtrar por usuário que realizou o reabastecimento
+    - `date_from`: Data inicial do período
+    - `date_to`: Data final do período
+    - `order_by`: Ordenação dos resultados
+
+    **Opções de Ordenação:**
+    - `created_at_desc`: Mais recentes primeiro (padrão)
+    - `created_at_asc`: Mais antigos primeiro
+    - `quantity_desc`: Maior quantidade primeiro
+    - `quantity_asc`: Menor quantidade primeiro
+
+    **Uso:**
+    - Ver todos os reabastecimentos recentes
+    - Auditar quem fez reabastecimentos
+    - Acompanhar entrada de estoque ao longo do tempo
+    - Relatórios de movimentação de estoque
+
+    **Retorna:**
+    - Lista paginada de reabastecimentos
+    - Informações do produto
+    - Quem realizou o reabastecimento
+    - Estatísticas e filtros aplicados
+    """
+    # Iniciar query
+    query = db.query(Restock)
+
+    # Aplicar filtros
+    if produto_id:
+        query = query.filter(Restock.produto_id == produto_id)
+
+    if created_by_id:
+        query = query.filter(Restock.created_by_id == created_by_id)
+
+    if date_from:
+        query = query.filter(Restock.created_at >= date_from)
+
+    if date_to:
+        date_to_end = date_to + timedelta(days=1, seconds=-1)
+        query = query.filter(Restock.created_at <= date_to_end)
+
+    # Contar total antes da paginação
+    total_restocks = query.count()
+
+    # Aplicar ordenação
+    if order_by == "created_at_asc":
+        query = query.order_by(Restock.created_at.asc())
+    elif order_by == "quantity_desc":
+        query = query.order_by(Restock.quantity.desc())
+    elif order_by == "quantity_asc":
+        query = query.order_by(Restock.quantity.asc())
+    else:  # created_at_desc (padrão)
+        query = query.order_by(Restock.created_at.desc())
+
+    # Aplicar paginação
+    restocks = query.offset(skip).limit(limit).all()
+
+    # Enriquecer dados com informações do produto e usuário
+    restocks_data = []
+    for restock in restocks:
+        produto = db.query(Produto).filter(Produto.id == restock.produto_id).first()
+        user = db.query(SystemUser).filter(SystemUser.id == restock.created_by_id).first()
+
+        restocks_data.append({
+            "id": restock.id,
+            "produto_id": restock.produto_id,
+            "produto_nome": produto.nome if produto else f"Produto #{restock.produto_id}",
+            "quantity": restock.quantity,
+            "created_at": restock.created_at,
+            "created_by_id": restock.created_by_id,
+            "created_by_username": user.username if user else "Desconhecido"
+        })
+
+    return {
+        "total_restocks": total_restocks,
+        "showing": len(restocks_data),
+        "skip": skip,
+        "limit": limit,
+        "filters_applied": {
+            "produto_id": produto_id,
+            "created_by_id": created_by_id,
+            "date_from": date_from.isoformat() if date_from else None,
+            "date_to": date_to.isoformat() if date_to else None,
+            "order_by": order_by
+        },
+        "restocks": restocks_data
     }
 
 
@@ -540,8 +647,191 @@ def download_template(
         filename=filename,
         headers={
             "Content-Disposition": f"attachment; filename={filename}",
-            "X-Template-Version": "1.0",
+            "X-Template-Version": "1.0"
         }
     )
+# ============================================
+# IMPORTACAO DE PRODUTOS VIA EXCEL
+# ============================================
+@router.post("/import")
+async def import_products_from_excel(
+        file: UploadFile = File(..., description="Arquivo Excel (.xlsx) com aba CONSOLIDADO"),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """
+    Importar produtos em massa via Excel
+    Estrutura esperada: Aba CONSOLIDADO com colunas:
+    1. Categoria (Doces, Salgados ou Bebidas)
+    2. Nome do Produto (obrigatorio)
+    3. Preco Unitario em R$ (obrigatorio, > 0)
+    4. Num de Fardos (opcional)
+    5. Qtd por Fardo (opcional)
+    6. Quantidade Total (calculada ou manual)
+    7. Estoque Minimo (opcional, padrao: 10)
+    Mapeamento de Categorias:
+    - Doces -> ProductType.DOCE
+    - Salgados -> ProductType.SALGADINHO
+    - Bebidas -> ProductType.BEBIDA
+    """
+    from app.services.product_import import import_products_from_upload
+    # Validar tipo de arquivo
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(
+            status_code=400,
+            detail="Arquivo invalido. Envie um arquivo Excel (.xlsx ou .xls)"
+        )
+    try:
+        # Importar produtos
+        result = await import_products_from_upload(
+            upload_file=file,
+            db=db,
+            created_by_username=current_user.username
+        )
+        if not result["success"]:
+            raise HTTPException(
+                status_code=400,
+                detail=result.get("error", "Erro ao importar produtos")
+            )
+        # Retornar estatisticas
+        return {
+            "success": True,
+            "message": f"Importacao concluida! {result['imported']} produto(s) importado(s).",
+            "statistics": {
+                "imported": result["imported"],
+                "skipped": result["skipped"],
+                "errors": result["errors"],
+                "total_processed": result["imported"] + result["skipped"] + result["errors"]
+            },
+            "errors_detail": result.get("errors_detail", []),
+            "imported_by": current_user.username
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao processar arquivo: {str(e)}"
+        )
 
+# ============================================
+# GERENCIAMENTO DE IMPORTACOES (ROLLBACK)
+# ============================================
+@router.get("/import/batches")
+def list_import_batches(
+        skip: int = Query(0, ge=0),
+        limit: int = Query(50, ge=1, le=100),
+        include_rolled_back: bool = Query(True, description="Incluir batches revertidos"),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """
+    Lista todos os batches de importacao de produtos
+    Permite visualizar historico de importacoes e identificar quais podem ser revertidas.
+    **Informacoes retornadas:**
+    - ID do batch
+    - Nome do arquivo importado
+    - Estatisticas (importados, ignorados, erros)
+    - Status (completed, rolled_back)
+    - Datas e usuarios
+    - Se pode fazer rollback
+    **Status do batch:**
+    - `completed`: Importacao concluida com sucesso
+    - `rolled_back`: Importacao foi revertida
+    **Pode fazer rollback quando:**
+    - Status = completed
+    - Existem produtos do batch no banco
+    - Nenhum produto foi vendido
+    """
+    from app.services.product_import import get_import_batches_list
+    batches = get_import_batches_list(
+        db=db,
+        skip=skip,
+        limit=limit,
+        include_rolled_back=include_rolled_back
+    )
+    return {
+        "total": len(batches),
+        "batches": batches
+    }
+@router.delete("/import/batches/{batch_id}")
+def rollback_import_batch(
+        batch_id: int,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """
+    Faz rollback (reverte) uma importacao de produtos
+    **Deleta todos os produtos** importados naquele batch.
+    **Validacoes:**
+    - Batch deve existir
+    - Batch nao pode ja ter sido revertido
+    - Nenhum produto do batch pode ter sido vendido
+    **O que acontece:**
+    1. Verifica se produtos foram vendidos
+    2. Se sim, retorna erro
+    3. Se nao, deleta todos os produtos do batch
+    4. Marca o batch como "rolled_back"
+    5. Registra quem fez o rollback e quando
+    **ATENCAO:** Esta acao e irreversivel!
+    **Retorna:**
+    - Numero de produtos deletados
+    - Informacoes do rollback
+    """
+    from app.services.product_import import rollback_import_batch as do_rollback
+    result = do_rollback(
+        batch_id=batch_id,
+        db=db,
+        rolled_back_by_username=current_user.username
+    )
+    if not result["success"]:
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("error", "Erro ao fazer rollback")
+        )
+    return {
+        "success": True,
+        "message": f"Rollback concluido! {result['deleted_count']} produto(s) deletado(s).",
+        "batch_id": result["batch_id"],
+        "deleted_count": result["deleted_count"],
+        "rolled_back_by": result["rolled_back_by"],
+        "rolled_back_at": result["rolled_back_at"]
+    }
+@router.get("/import/batches/{batch_id}")
+def get_import_batch_details(
+        batch_id: int,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """
+    Retorna detalhes de um batch de importacao especifico
+    Inclui lista de produtos importados naquele batch.
+    """
+    from app.models import ProductImportBatch
+    batch = db.query(ProductImportBatch).filter(ProductImportBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch nao encontrado")
+    # Buscar produtos do batch
+    products = db.query(Produto).filter(Produto.import_batch_id == batch_id).all()
+    return {
+        "id": batch.id,
+        "filename": batch.filename,
+        "imported_count": batch.imported_count,
+        "skipped_count": batch.skipped_count,
+        "error_count": batch.error_count,
+        "status": batch.status,
+        "created_at": batch.created_at.isoformat(),
+        "created_by": batch.created_by.username if batch.created_by else None,
+        "rolled_back_at": batch.rolled_back_at.isoformat() if batch.rolled_back_at else None,
+        "rolled_back_by": batch.rolled_back_by.username if batch.rolled_back_by else None,
+        "products": [
+            {
+                "id": p.id,
+                "nome": p.nome,
+                "tipo": p.tipo.value if p.tipo else None,
+                "valor": p.valor,
+                "estoque": p.estoque,
+                "is_active": p.is_active
+            }
+            for p in products
+        ]
+    }
 
