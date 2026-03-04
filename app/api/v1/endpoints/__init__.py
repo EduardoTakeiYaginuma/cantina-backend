@@ -10,6 +10,7 @@ from .sales import router as sales_router
 from .dashboard import router as dashboard_router
 from .backup import router as backup_router
 from .audit import router as audit_router
+from .event_config import router as event_config_router
 
 __all__ = [
     "auth_router",
@@ -19,4 +20,5 @@ __all__ = [
     "dashboard_router",
     "backup_router",
     "audit_router",
+    "event_config_router",
 ]

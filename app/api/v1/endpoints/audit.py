@@ -347,8 +347,12 @@ def export_audit_logs(
     """
     from fastapi.responses import StreamingResponse
     import io
+    from app.core.event_utils import get_current_event_name
 
     audit = AuditService(db)
+
+    # Obter nome do evento atual
+    event_name = get_current_event_name(db)
 
     # Gerar CSV
     csv_content, filename, total = audit.export_logs_to_csv(
@@ -360,7 +364,8 @@ def export_audit_logs(
         entity_id=entity_id,
         entity_name=entity_name,
         search=search,
-        limit=limit
+        limit=limit,
+        event_name=event_name
     )
 
     # Retornar como download
@@ -417,8 +422,12 @@ def export_audit_logs_json(
     """
     from fastapi.responses import StreamingResponse
     import io
+    from app.core.event_utils import get_current_event_name
 
     audit = AuditService(db)
+
+    # Obter nome do evento atual
+    event_name = get_current_event_name(db)
 
     json_content, filename, total = audit.export_logs_to_json(
         start_date=start_date,
@@ -429,7 +438,8 @@ def export_audit_logs_json(
         entity_id=entity_id,
         entity_name=entity_name,
         search=search,
-        limit=limit
+        limit=limit,
+        event_name=event_name
     )
 
     return StreamingResponse(
@@ -483,8 +493,12 @@ def export_audit_logs_excel(
     """
     from fastapi.responses import StreamingResponse
     import io
+    from app.core.event_utils import get_current_event_name
 
     audit = AuditService(db)
+
+    # Obter nome do evento atual
+    event_name = get_current_event_name(db)
 
     try:
         excel_content, filename, total = audit.export_logs_to_excel(
@@ -496,7 +510,8 @@ def export_audit_logs_excel(
             entity_id=entity_id,
             entity_name=entity_name,
             search=search,
-            limit=limit
+            limit=limit,
+            event_name=event_name
         )
 
         return StreamingResponse(
@@ -559,8 +574,12 @@ def export_audit_logs_pdf(
     """
     from fastapi.responses import StreamingResponse
     import io
+    from app.core.event_utils import get_current_event_name
 
     audit = AuditService(db)
+
+    # Obter nome do evento atual
+    event_name = get_current_event_name(db)
 
     try:
         pdf_content, filename, total = audit.export_logs_to_pdf(
@@ -572,7 +591,8 @@ def export_audit_logs_pdf(
             entity_id=entity_id,
             entity_name=entity_name,
             search=search,
-            limit=limit
+            limit=limit,
+            event_name=event_name
         )
 
         return StreamingResponse(

@@ -467,3 +467,81 @@ def get_product_price_history(
     }
 
 
+# ============================================
+# DOWNLOAD DE TEMPLATE PARA IMPORTAÇÃO
+# ============================================
+
+@router.get("/template/download")
+def download_template(
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)  # Qualquer usuário autenticado
+):
+    """
+    📥 **Download do template Excel para importação de produtos**
+
+    Retorna o arquivo Excel modelo para importação em massa de produtos.
+
+    **Estrutura do Template:**
+    - **Aba Doces:** Para cadastro de chocolates, balas, etc.
+    - **Aba Salgados:** Para cadastro de salgadinhos, biscoitos, etc.
+    - **Aba Bebidas:** Para cadastro de refrigerantes, sucos, etc.
+    - **Aba CONSOLIDADO:** Junção automática (use esta para importação!)
+
+    **Colunas:**
+    1. Categoria (preenchida automaticamente)
+    2. Nome do Produto (obrigatório)
+    3. Preço Unitário (obrigatório)
+    4. Nº de Fardos (opcional)
+    5. Qtd por Fardo (opcional)
+    6. Quantidade Total (calculada automaticamente)
+    7. Estoque Mínimo (opcional)
+
+    **Como usar:**
+    1. Baixe este template
+    2. Preencha as abas Doces/Salgados/Bebidas
+    3. A aba CONSOLIDADO atualiza automaticamente
+    4. Use a aba CONSOLIDADO para importação
+
+    **Retorna:**
+    Arquivo Excel (.xlsx) para download
+    """
+    from fastapi.responses import FileResponse
+    from pathlib import Path
+    from app.core.event_utils import get_event_name_or_default
+
+    # Caminho do template - usar caminho absoluto baseado no arquivo main.py
+    # O arquivo main.py está na raiz do projeto
+    project_root = Path(__file__).parent.parent.parent.parent.parent
+    template_path = project_root / "templates" / "template_planilha_produtos.xlsx"
+
+    # Tentar alternativas se não encontrar
+    if not template_path.exists():
+        # Tentar caminho relativo ao diretório de trabalho atual
+        template_path = Path("templates") / "template_planilha_produtos.xlsx"
+
+    if not template_path.exists():
+        # Tentar no diretório onde o servidor foi iniciado
+        template_path = Path.cwd() / "templates" / "template_planilha_produtos.xlsx"
+
+    # Verificar se o arquivo existe
+    if not template_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Template não encontrado. Caminho verificado: {template_path.absolute()}. Execute: python create_product_template.py"
+        )
+
+
+    filename = "template_produtos.xlsx"
+
+    # Retornar arquivo para download
+    return FileResponse(
+        path=str(template_path),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=filename,
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "X-Template-Version": "1.0",
+        }
+    )
+
+

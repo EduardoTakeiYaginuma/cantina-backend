@@ -88,6 +88,19 @@ from .audit import (
     AuditLogsPagedResponse,
 )
 
+# Event Config
+from .event_config import (
+    EventRoomBase,
+    EventRoomCreate,
+    EventRoomUpdate,
+    EventRoomResponse,
+    EventConfigBase,
+    EventConfigCreate,
+    EventConfigUpdate,
+    EventConfigResponse,
+    EventConfigSummary,
+)
+
 __all__ = [
     # User & Auth
     "SystemUserBase",
@@ -149,4 +162,14 @@ __all__ = [
     "AuditFilterParams",
     "UnifiedAuditLogResponse",
     "AuditLogsPagedResponse",
+    # Event Config
+    "EventRoomBase",
+    "EventRoomCreate",
+    "EventRoomUpdate",
+    "EventRoomResponse",
+    "EventConfigBase",
+    "EventConfigCreate",
+    "EventConfigUpdate",
+    "EventConfigResponse",
+    "EventConfigSummary",
 ]

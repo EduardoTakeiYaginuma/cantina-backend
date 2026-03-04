@@ -2,7 +2,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 from dotenv import load_dotenv
+from sqlalchemy.orm import Session
 
+from database import get_db
 from app.core.dependencies import get_current_user, require_admin
 from app.models import SystemUser  # ← ATUALIZADO
 from app import schemas
@@ -23,13 +25,15 @@ backup_manager = BackupManager()
 
 @router.post("/create", response_model=schemas.BackupResponse)
 def create_backup(
+        db: Session = Depends(get_db),
         current_admin: SystemUser = Depends(require_admin)  # ← Apenas ADMIN
 ):
     """
     Cria um novo backup do banco de dados. 
+    O nome do arquivo inclui o nome do evento ativo.
     Apenas administradores podem criar backups.
     """
-    result = backup_manager.create_backup()
+    result = backup_manager.create_backup(db=db)
 
     if not result["success"]:
         raise HTTPException(

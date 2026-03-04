@@ -216,3 +216,52 @@ class BalanceTransaction(Base):
     # Relationships
     customer = relationship("Customers", back_populates="balance_transactions")
     created_by = relationship("SystemUser", back_populates="balance_transactions_created")
+
+
+# ============================================
+# TABELA 8: Configuração de Evento
+# ============================================
+
+class EventConfig(Base):
+    """Configurações do evento atual, incluindo nome e lista de quartos"""
+    __tablename__ = "event_config"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_name = Column(String(255), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    # Campos de auditoria
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_by_id = Column(Integer, ForeignKey("system_users.id"))
+    updated_at = Column(DateTime, onupdate=lambda: datetime.now(timezone.utc))
+    updated_by_id = Column(Integer, ForeignKey("system_users.id"))
+
+    # Relationships
+    rooms = relationship("EventRoom", back_populates="event_config", cascade="all, delete-orphan")
+    created_by = relationship("SystemUser", foreign_keys=lambda: [EventConfig.created_by_id])
+    updated_by = relationship("SystemUser", foreign_keys=lambda: [EventConfig.updated_by_id])
+
+
+# ============================================
+# TABELA 9: Quartos do Evento
+# ============================================
+
+class EventRoom(Base):
+    """Quartos disponíveis no evento"""
+    __tablename__ = "event_rooms"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_config_id = Column(Integer, ForeignKey("event_config.id"), nullable=False)
+    room_name = Column(String(100), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    # Ordem de exibição
+    display_order = Column(Integer, default=0)
+
+    # Campos de auditoria
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_by_id = Column(Integer, ForeignKey("system_users.id"))
+
+    # Relationships
+    event_config = relationship("EventConfig", back_populates="rooms")
+    created_by = relationship("SystemUser", foreign_keys=lambda: [EventRoom.created_by_id])
