@@ -2,9 +2,10 @@ import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional
 import gzip
 from dotenv import load_dotenv
+from sqlalchemy.orm import Session
 
 load_dotenv()
 
@@ -36,10 +37,24 @@ class BackupManager:
 
         self.db_name = self.db_path.stem
 
-    def create_backup(self) -> Dict[str, str]:
+    def _get_event_name_for_filename(self, db: Optional[Session]) -> str:
+        """Obtém o nome do evento para usar no nome do arquivo"""
+        if db:
+            try:
+                from app.core.event_utils import get_event_name_or_default
+                return get_event_name_or_default(db, default=self.db_name)
+            except:
+                pass
+        return self.db_name
+
+    def create_backup(self, db: Optional[Session] = None) -> Dict[str, str]:
         """Create a backup of the SQLite database"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_filename = f"backup_{self.db_name}_{timestamp}.db"
+
+        # Usar nome do evento se disponível
+        db_name = self._get_event_name_for_filename(db)
+
+        backup_filename = f"backup_{db_name}_{timestamp}.db"
         backup_path = self.backup_dir / backup_filename
 
         try:
@@ -68,6 +83,7 @@ class BackupManager:
                 "path": str(compressed_path),
                 "size": file_size,
                 "timestamp": timestamp,
+                "event_name": db_name if db_name != self.db_name else None,
                 "message": f"Backup created successfully: {compressed_filename}"
             }
 

@@ -735,14 +735,22 @@ class AuditService:
         end_date: Optional[datetime] = None,
         user_id: Optional[int] = None,
         action: Optional[str] = None,
-        entity_type: Optional[str] = None
+        entity_type: Optional[str] = None,
+        event_name: Optional[str] = None
     ) -> str:
         """
         Gera nome de arquivo com metadados (usado por todos os formatos).
+        Inclui o nome do evento se disponível.
         """
         from datetime import datetime as dt
 
-        filename_parts = [base_name]
+        filename_parts = []
+
+        # Adicionar nome do evento se disponível
+        if event_name:
+            filename_parts.append(event_name)
+
+        filename_parts.append(base_name)
 
         # Adicionar timestamp
         timestamp = dt.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -773,7 +781,8 @@ class AuditService:
         entity_id: Optional[int] = None,
         entity_name: Optional[str] = None,
         search: Optional[str] = None,
-        limit: int = 10000
+        limit: int = 10000,
+        event_name: Optional[str] = None
     ):
         """
         Exporta logs de auditoria para CSV.
@@ -808,6 +817,8 @@ class AuditService:
 
         # Adicionar informações de filtros no topo
         writer.writerow(['RELATÓRIO DE LOGS DE AUDITORIA'])
+        if event_name:
+            writer.writerow(['Evento:', event_name])
         writer.writerow(['Gerado em:', datetime.now().strftime('%Y-%m-%d %H:%M:%S')])
         writer.writerow(['Total de registros:', total])
         writer.writerow([])  # Linha em branco
@@ -871,7 +882,7 @@ class AuditService:
         # Gerar nome do arquivo
         filename = self._get_filename(
             'audit_logs', '.csv',
-            start_date, end_date, user_id, action, entity_type
+            start_date, end_date, user_id, action, entity_type, event_name
         )
 
         csv_content = output.getvalue()
@@ -889,7 +900,8 @@ class AuditService:
         entity_id: Optional[int] = None,
         entity_name: Optional[str] = None,
         search: Optional[str] = None,
-        limit: int = 10000
+        limit: int = 10000,
+        event_name: Optional[str] = None
     ):
         """
         Exporta logs de auditoria para JSON.
@@ -966,6 +978,7 @@ class AuditService:
 
         export_data = {
             'metadata': {
+                'event_name': event_name,
                 'exported_at': datetime.now().isoformat(),
                 'total_records': total,
                 'filters_applied': filters_description,
@@ -989,7 +1002,7 @@ class AuditService:
         # Gerar nome do arquivo
         filename = self._get_filename(
             'audit_logs', '.json',
-            start_date, end_date, user_id, action, entity_type
+            start_date, end_date, user_id, action, entity_type, event_name
         )
 
         return json_content, filename, total
@@ -1004,7 +1017,8 @@ class AuditService:
         entity_id: Optional[int] = None,
         entity_name: Optional[str] = None,
         search: Optional[str] = None,
-        limit: int = 10000
+        limit: int = 10000,
+        event_name: Optional[str] = None
     ):
         """
         Exporta logs de auditoria para Excel (XLSX).
@@ -1105,13 +1119,19 @@ class AuditService:
 
         # Estatísticas gerais
         ws_stats.cell(row=1, column=1, value="Resumo da Exportação").font = Font(bold=True, size=14)
-        ws_stats.cell(row=2, column=1, value="Total de registros:")
-        ws_stats.cell(row=2, column=2, value=total)
-        ws_stats.cell(row=3, column=1, value="Exportado em:")
-        ws_stats.cell(row=3, column=2, value=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        row = 2
+        if event_name:
+            ws_stats.cell(row=row, column=1, value="Evento:")
+            ws_stats.cell(row=row, column=2, value=event_name).font = Font(bold=True)
+            row += 1
+        ws_stats.cell(row=row, column=1, value="Total de registros:")
+        ws_stats.cell(row=row, column=2, value=total)
+        row += 1
+        ws_stats.cell(row=row, column=1, value="Exportado em:")
+        ws_stats.cell(row=row, column=2, value=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
         # Filtros aplicados
-        row = 5
+        row += 2
         ws_stats.cell(row=row, column=1, value="Filtros Aplicados").font = Font(bold=True, size=12)
         row += 1
 
@@ -1205,7 +1225,7 @@ class AuditService:
         # Gerar nome do arquivo
         filename = self._get_filename(
             'audit_logs', '.xlsx',
-            start_date, end_date, user_id, action, entity_type
+            start_date, end_date, user_id, action, entity_type, event_name
         )
 
         return excel_content, filename, total
@@ -1220,7 +1240,8 @@ class AuditService:
         entity_id: Optional[int] = None,
         entity_name: Optional[str] = None,
         search: Optional[str] = None,
-        limit: int = 1000  # Limite menor para PDF (performance)
+        limit: int = 1000,  # Limite menor para PDF (performance)
+        event_name: Optional[str] = None
     ):
         """
         Exporta logs de auditoria para PDF.
@@ -1284,6 +1305,8 @@ class AuditService:
 
         # Informações do relatório
         info_style = styles['Normal']
+        if event_name:
+            elements.append(Paragraph(f"<b>Evento:</b> {event_name}", info_style))
         elements.append(Paragraph(f"<b>Gerado em:</b> {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", info_style))
         elements.append(Paragraph(f"<b>Total de registros:</b> {total}", info_style))
 
@@ -1377,7 +1400,7 @@ class AuditService:
         # Gerar nome do arquivo
         filename = self._get_filename(
             'audit_logs', '.pdf',
-            start_date, end_date, user_id, action, entity_type
+            start_date, end_date, user_id, action, entity_type, event_name
         )
 
         return pdf_content, filename, total

@@ -11,6 +11,7 @@ from .endpoints import (
     dashboard_router,
     backup_router,
     audit_router,
+    event_config_router,
 )
 
 # Router principal da v1
@@ -24,4 +25,5 @@ api_router.include_router(sales_router, tags=["sales"])
 api_router.include_router(dashboard_router, tags=["dashboard"])
 api_router.include_router(backup_router, tags=["backup"])
 api_router.include_router(audit_router, tags=["audit"])
+api_router.include_router(event_config_router, tags=["event-config"])
 __all__ = ["api_router"]
