@@ -35,6 +35,13 @@ class CustomerTipo(str, enum.Enum):
     ACAMPANTE = "acampante"
     EQUIPE = "equipe"
 
+
+class ProductType(str, enum.Enum):
+    """Tipos de PRODUTOS"""
+    BEBIDA = "bebida"
+    DOCE = "doce"
+    SALGADINHO = "salgadinho"
+
 # ============================================
 # TABELA 1: Usuários do Sistema (Login)
 # ============================================
@@ -117,10 +124,14 @@ class Produto(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     nome = Column(String(255), nullable=False)
+    tipo = Column(Enum(ProductType), nullable=True)  # Tipo do produto (BEBIDA, DOCE, SALGADINHO)
     valor = Column(Float, nullable=False)
     estoque = Column(Integer, default=0)
     estoque_minimo = Column(Integer, default=10)
     is_active = Column(Boolean, default=True)
+
+    # Rastreamento de importação
+    import_batch_id = Column(Integer, ForeignKey("product_import_batches.id"), nullable=True)
 
     # Campos de auditoria
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -131,6 +142,7 @@ class Produto(Base):
     # Relationships
     sale_items = relationship("SaleItem", back_populates="produto")
     restocks = relationship("Restock", back_populates="produto")
+    import_batch = relationship("ProductImportBatch", back_populates="products")
     created_by = relationship("SystemUser", foreign_keys=lambda: [Produto.created_by_id], backref="produtos_created")
     updated_by = relationship("SystemUser", foreign_keys=lambda: [Produto.updated_by_id], backref="produtos_updated")
 
@@ -265,3 +277,36 @@ class EventRoom(Base):
     # Relationships
     event_config = relationship("EventConfig", back_populates="rooms")
     created_by = relationship("SystemUser", foreign_keys=lambda: [EventRoom.created_by_id])
+
+
+# ============================================
+# TABELA: Rastreamento de Importações
+# ============================================
+
+class ProductImportBatch(Base):
+    """Rastreia lotes de importação de produtos para permitir rollback"""
+    __tablename__ = "product_import_batches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    filename = Column(String(255), nullable=False)
+    imported_count = Column(Integer, default=0)
+    skipped_count = Column(Integer, default=0)
+    error_count = Column(Integer, default=0)
+    status = Column(String(50), default="completed")  # completed, rolled_back
+
+    # Auditoria
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
+    rolled_back_at = Column(DateTime, nullable=True)
+    rolled_back_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+
+    # Relationships
+    created_by = relationship("SystemUser", foreign_keys=lambda: [ProductImportBatch.created_by_id])
+    rolled_back_by = relationship("SystemUser", foreign_keys=lambda: [ProductImportBatch.rolled_back_by_id])
+    products = relationship("Produto", back_populates="import_batch")
+
+
+# Atualizar modelo Produto para incluir rastreamento de importação
+# (Adicionar na classe Produto existente)
+
+

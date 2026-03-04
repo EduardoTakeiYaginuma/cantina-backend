@@ -22,6 +22,8 @@ class AuditAction(str, enum.Enum):
     BALANCE_DEBIT = "balance_debit"
     SALE = "sale"
     PASSWORD_CHANGE = "password_change"
+    IMPORT = "import"  # Importação em massa de produtos
+    ROLLBACK = "rollback"  # Rollback de importação
 
 
 # ============================================
@@ -173,5 +175,39 @@ class AuditSummary(Base):
 
     __table_args__ = (
         Index('idx_date_entity_action', 'date', 'entity_type', 'action'),
+    )
+
+
+# ============================================
+# TABELA 6: Auditoria de Sistema (Ações Gerais)
+# ============================================
+
+class SystemAuditLog(Base):
+    """
+    Registra ações gerais do sistema como importações, rollbacks, backups, etc.
+    Para ações que não se encaixam em entidades específicas.
+    """
+    __tablename__ = "system_audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    action = Column(Enum(AuditAction), nullable=False)
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+    # Entidade relacionada (genérico)
+    entity_type = Column(String(50), nullable=True)  # Ex: "product_batch", "backup", etc
+    entity_id = Column(Integer, nullable=True)
+
+    # Dados da ação (JSON para flexibilidade)
+    old_values = Column(JSON, nullable=True)
+    new_values = Column(JSON, nullable=True)
+    description = Column(Text, nullable=True)
+
+    # Relationships
+    created_by = relationship("SystemUser", backref="system_audit_logs")
+
+    __table_args__ = (
+        Index('idx_system_action_date', 'action', 'created_at'),
+        Index('idx_system_entity', 'entity_type', 'entity_id'),
     )
 
