@@ -100,6 +100,7 @@ def create_sale(
         db.flush()  # Obter o ID da venda
 
         # Criar itens da venda
+        sale_items = []
         for item_data in items_to_create:
             sale_item = SaleItem(
                 sale_id=db_sale.id,
@@ -109,6 +110,7 @@ def create_sale(
                 total_price=item_data["total_price"]
             )
             db.add(sale_item)
+            sale_items.append((sale_item, item_data))
 
         # Atualizar estoque dos produtos
         for produto, quantity in products_to_update:
@@ -144,6 +146,10 @@ def create_sale(
         db.commit()
         db.refresh(db_sale)
 
+        # Refresh sale items to get their IDs
+        for sale_item, _ in sale_items:
+            db.refresh(sale_item)
+
         # Preparar resposta
         return {
             "id": db_sale.id,
@@ -155,15 +161,21 @@ def create_sale(
             "created_by_id": current_user.id,
             "created_by_username": current_user.username,
             "is_cancelled": db_sale.is_cancelled,
+            "cancelled_at": db_sale.cancelled_at,
+            "cancelled_by_id": db_sale.cancelled_by_id,
+            "cancelled_by_username": None,  # Nova venda nunca está cancelada
+            "cancellation_reason": db_sale.cancellation_reason,
             "items": [
                 {
-                    "produto_id": item["produto"].id,
-                    "produto_nome": item["produto"].nome,
-                    "quantity": item["quantity"],
-                    "unit_price": float(item["unit_price"]),
-                    "total_price": float(item["total_price"])
+                    "id": sale_item.id,
+                    "sale_id": sale_item.sale_id,
+                    "produto_id": item_data["produto"].id,
+                    "produto_nome": item_data["produto"].nome,
+                    "quantity": item_data["quantity"],
+                    "unit_price": float(item_data["unit_price"]),
+                    "total_price": float(item_data["total_price"])
                 }
-                for item in items_to_create
+                for sale_item, item_data in sale_items
             ]
         }
 
@@ -214,8 +226,14 @@ def list_sales(
             "created_by_id": sale.created_by_id,
             "created_by_username": sale.created_by.username if sale.created_by else "N/A",
             "is_cancelled": sale.is_cancelled,
+            "cancelled_at": sale.cancelled_at,
+            "cancelled_by_id": sale.cancelled_by_id,
+            "cancelled_by_username": sale.cancelled_by.username if sale.cancelled_by else None,
+            "cancellation_reason": sale.cancellation_reason,
             "items": [
                 {
+                    "id": item.id,
+                    "sale_id": item.sale_id,
                     "produto_id": item.produto_id,
                     "produto_nome": item.produto.nome,
                     "quantity": item.quantity,
@@ -228,112 +246,6 @@ def list_sales(
 
     return result
 
-
-@router.get("/{sale_id}", response_model=schemas.SaleResponse)
-def get_sale(
-        sale_id: int,
-        db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_user)
-):
-    """Busca uma venda específica por ID"""
-    sale = db.query(Sale).filter(Sale.id == sale_id).first()
-
-    if not sale:
-        raise HTTPException(status_code=404, detail="Venda não encontrada")
-
-    return {
-        "id": sale.id,
-        "customer_id": sale.customer_id,
-        "customer_nome": sale.customer.nome,
-        "customer_nickname": sale.customer.nickname,
-        "total_amount": float(sale.total_amount),
-        "created_at": sale.created_at,
-        "created_by_id": sale.created_by_id,
-        "created_by_username": sale.created_by.username if sale.created_by else "N/A",
-        "is_cancelled": sale.is_cancelled,
-        "cancelled_at": sale.cancelled_at,
-        "cancelled_by_id": sale.cancelled_by_id,
-        "cancellation_reason": sale.cancellation_reason,
-        "items": [
-            {
-                "produto_id": item.produto_id,
-                "produto_nome": item.produto.nome,
-                "quantity": item.quantity,
-                "unit_price": float(item.unit_price),
-                "total_price": float(item.total_price)
-            }
-            for item in sale.items
-        ]
-    }
-
-
-@router.delete("/{sale_id}")
-def cancel_sale(
-        sale_id: int,
-        cancellation: schemas.SaleCancellation,
-        db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)
-):
-    """
-    Cancela uma venda (soft delete).
-    Apenas administradores podem cancelar vendas.
-
-    - Devolve estoque
-    - Devolve saldo ao cliente
-    - Registra motivo do cancelamento
-    """
-    sale = db.query(Sale).filter(Sale.id == sale_id).first()
-
-    if not sale:
-        raise HTTPException(status_code=404, detail="Venda não encontrada")
-
-    if sale.is_cancelled:
-        raise HTTPException(status_code=400, detail="Venda já foi cancelada")
-
-    try:
-        # Devolver estoque
-        for item in sale.items:
-            produto = db.query(Produto).filter(Produto.id == item.produto_id).first()
-            if produto:
-                produto.estoque += item.quantity
-
-        # Devolver saldo ao cliente
-        customer = db.query(Customers).filter(Customers.id == sale.customer_id).first()
-        if customer:
-            old_balance = customer.saldo
-            customer.saldo += sale.total_amount
-
-        # Marcar venda como cancelada
-        sale.is_cancelled = True
-        sale.cancelled_at = datetime.utcnow()
-        sale.cancelled_by_id = current_user.id
-        sale.cancellation_reason = cancellation.reason
-
-        # Registrar auditoria
-        audit = AuditService(db)
-        audit.log_sale_cancel(
-            sale_id=sale.id,
-            customer_id=customer.id,
-            customer_nome=customer.nome,
-            total_amount=float(sale.total_amount),
-            reason=cancellation.reason,
-            old_customer_balance=old_balance,
-            new_customer_balance=customer.saldo,
-            created_by_id=current_user.id
-        )
-
-        db.commit()
-
-        return {
-            "message": "Venda cancelada com sucesso",
-            "sale_id": sale.id,
-            "refunded_amount": float(sale.total_amount),
-            "customer_new_balance": float(customer.saldo)
-        }
-
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Erro ao cancelar venda: {str(e)}")
 
 
 # ============================================
@@ -358,6 +270,9 @@ def get_sales_report(
         # Busca por texto
         search: Optional[str] = Query(None, description="Buscar por nome/nickname do cliente"),
 
+        # Incluir canceladas
+        include_cancelled: bool = Query(False, description="Incluir vendas canceladas"),
+
         # Paginação e ordenação
         skip: int = Query(0, description="Número de registros para pular"),
         limit: int = Query(100, description="Número máximo de registros"),
@@ -368,10 +283,15 @@ def get_sales_report(
 ):
     """
     Retorna relatório detalhado de vendas com filtros avançados.
-    Apenas vendas ativas (não canceladas) são incluídas por padrão.
+    Por padrão, apenas vendas ativas (não canceladas) são incluídas.
+    Use include_cancelled=true para incluir vendas canceladas.
     """
-    # Montar query base - APENAS vendas NÃO canceladas
-    query = db.query(Sale).join(Customers).filter(Sale.is_cancelled == False)
+    # Montar query base
+    query = db.query(Sale).join(Customers)
+
+    # Filtrar vendas canceladas (opcional)
+    if not include_cancelled:
+        query = query.filter(Sale.is_cancelled == False)
 
     # Aplicar filtros
     filters = []
@@ -448,6 +368,10 @@ def get_sales_report(
             },
             "total_amount": float(sale.total_amount),
             "is_cancelled": sale.is_cancelled,
+            "cancelled_at": sale.cancelled_at.isoformat() if sale.cancelled_at else None,
+            "cancelled_by_id": sale.cancelled_by_id,
+            "cancelled_by_username": sale.cancelled_by.username if sale.cancelled_by else None,
+            "cancellation_reason": sale.cancellation_reason,
             "items_count": len(sale.items),
             "items": [
                 {
@@ -475,6 +399,7 @@ def get_sales_report(
             "min_amount": min_amount,
             "max_amount": max_amount,
             "search": search,
+            "include_cancelled": include_cancelled,
             "order_by": order_by
         },
         "summary": {
@@ -529,6 +454,10 @@ def get_customer_sales_history(
                 "created_at": sale.created_at.isoformat(),
                 "total_amount": float(sale.total_amount),
                 "is_cancelled": sale.is_cancelled,
+                "cancelled_at": sale.cancelled_at.isoformat() if sale.cancelled_at else None,
+                "cancelled_by_id": sale.cancelled_by_id,
+                "cancelled_by_username": sale.cancelled_by.username if sale.cancelled_by else None,
+                "cancellation_reason": sale.cancellation_reason,
                 "created_by_username": sale.created_by.username if sale.created_by else "N/A",
                 "items_count": len(sale.items)
             }
@@ -537,5 +466,116 @@ def get_customer_sales_history(
     }
 
 
+# ============================================
+# CRUD Operations by ID (must be at the end)
+# ============================================
+
+@router.get("/{sale_id}", response_model=schemas.SaleResponse)
+def get_sale(
+        sale_id: int,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """Busca uma venda específica por ID"""
+    sale = db.query(Sale).filter(Sale.id == sale_id).first()
+
+    if not sale:
+        raise HTTPException(status_code=404, detail="Venda não encontrada")
+
+    return {
+        "id": sale.id,
+        "customer_id": sale.customer_id,
+        "customer_nome": sale.customer.nome,
+        "customer_nickname": sale.customer.nickname,
+        "total_amount": float(sale.total_amount),
+        "created_at": sale.created_at,
+        "created_by_id": sale.created_by_id,
+        "created_by_username": sale.created_by.username if sale.created_by else "N/A",
+        "is_cancelled": sale.is_cancelled,
+        "cancelled_at": sale.cancelled_at,
+        "cancelled_by_id": sale.cancelled_by_id,
+        "cancelled_by_username": sale.cancelled_by.username if sale.cancelled_by else None,
+        "cancellation_reason": sale.cancellation_reason,
+        "items": [
+            {
+                "id": item.id,
+                "sale_id": item.sale_id,
+                "produto_id": item.produto_id,
+                "produto_nome": item.produto.nome,
+                "quantity": item.quantity,
+                "unit_price": float(item.unit_price),
+                "total_price": float(item.total_price)
+            }
+            for item in sale.items
+        ]
+    }
 
 
+@router.delete("/{sale_id}")
+def cancel_sale(
+        sale_id: int,
+        cancellation: schemas.SaleCancellation,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """
+    Cancela uma venda (soft delete).
+    Apenas administradores podem cancelar vendas.
+
+    - Devolve estoque
+    - Devolve saldo ao cliente
+    - Registra motivo do cancelamento
+    """
+    sale = db.query(Sale).filter(Sale.id == sale_id).first()
+
+    if not sale:
+        raise HTTPException(status_code=404, detail="Venda não encontrada")
+
+    if sale.is_cancelled:
+        raise HTTPException(status_code=400, detail="Venda já foi cancelada")
+
+    try:
+        # Devolver estoque
+        for item in sale.items:
+            produto = db.query(Produto).filter(Produto.id == item.produto_id).first()
+            if produto:
+                produto.estoque += item.quantity
+
+        # Devolver saldo ao cliente
+        customer = db.query(Customers).filter(Customers.id == sale.customer_id).first()
+        old_balance = 0.0
+        if customer:
+            old_balance = customer.saldo
+            customer.saldo += sale.total_amount
+
+        # Marcar venda como cancelada
+        sale.is_cancelled = True
+        sale.cancelled_at = datetime.utcnow()
+        sale.cancelled_by_id = current_user.id
+        sale.cancellation_reason = cancellation.reason
+
+        # Registrar auditoria
+        audit = AuditService(db)
+        audit.log_sale_cancel(
+            sale_id=sale.id,
+            customer_id=customer.id,
+            customer_nome=customer.nome,
+            total_amount=float(sale.total_amount),
+            reason=cancellation.reason,
+            old_customer_balance=old_balance,
+            new_customer_balance=customer.saldo,
+            created_by_id=current_user.id
+        )
+
+        db.commit()
+
+        return {
+            "message": "Venda cancelada com sucesso",
+            "sale_id": sale.id,
+            "refunded_amount": float(sale.total_amount),
+            "customer_new_balance": float(customer.saldo)
+        }
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Erro ao cancelar venda: {str(e)}")
