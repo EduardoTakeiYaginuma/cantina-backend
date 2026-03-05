@@ -44,6 +44,22 @@ from .sale import (
     SaleCancellation,
     SaleResponse,
     RecentSale,
+    GuestSaleCreate,
+    GuestSaleResponse,
+)
+
+# Product Write-Off
+from .product import (
+    ProdutoBase,
+    ProdutoCreate,
+    ProdutoUpdate,
+    ProdutoResponse,
+    ProdutoSalesStats,
+    LowStockProduto,
+    ProductWriteOffItem,
+    ProductWriteOffCreate,
+    ProductWriteOffItemResponse,
+    ProductWriteOffResponse,
 )
 
 # Transaction
@@ -125,6 +141,10 @@ __all__ = [
     "ProdutoResponse",
     "ProdutoSalesStats",
     "LowStockProduto",
+    "ProductWriteOffItem",
+    "ProductWriteOffCreate",
+    "ProductWriteOffItemResponse",
+    "ProductWriteOffResponse",
     # Sale
     "SaleItemCreate",
     "SaleItemResponse",
@@ -132,6 +152,8 @@ __all__ = [
     "SaleCancellation",
     "SaleResponse",
     "RecentSale",
+    "GuestSaleCreate",
+    "GuestSaleResponse",
     # Transaction
     "RestockCreate",
     "RestockResponse",

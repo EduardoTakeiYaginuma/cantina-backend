@@ -6,7 +6,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 
 from database import get_db
-from app.core.dependencies import get_current_user, get_current_active_admin
+from app.core.dependencies import get_current_user, get_current_active_admin, get_current_admin_or_operator
 from app.core.timezone import get_now
 from app.repositories import ProdutoRepository  # ← NOVO
 from app.models import SystemUser, Produto, SaleItem, Restock  # ← ATUALIZADO
@@ -263,6 +263,20 @@ def restock_produto(
         quantity=restock_data.quantity
     )
     db.add(restock)
+
+    # Registrar auditoria
+    from app.services.audit import AuditService
+    from app.models_audit import AuditAction
+    audit = AuditService(db)
+    audit.log_product_action(
+        produto_id=produto_id,
+        action=AuditAction.RESTOCK,
+        created_by_id=current_user.id,
+        old_values={"estoque": old_stock},
+        new_values={"estoque": produto.estoque, "quantidade_adicionada": restock_data.quantity},
+        description=f"Reabastecimento de {restock_data.quantity} unidade(s) - Estoque: {old_stock} → {produto.estoque}"
+    )
+
     db.commit()
     db.refresh(restock)
 

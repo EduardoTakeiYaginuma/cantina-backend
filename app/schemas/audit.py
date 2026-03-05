@@ -93,6 +93,7 @@ class AuditLogResponse(BaseModel):
     """Resposta genérica de log de auditoria"""
     entity_type: str
     entity_id: int
+    entity_name: Optional[str] = None
     action: str
     created_at: datetime
     old_values: Optional[Dict[str, Any]] = None

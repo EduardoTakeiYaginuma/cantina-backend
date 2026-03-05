@@ -47,6 +47,26 @@ class SaleCancellation(BaseModel):
     reason: str = Field(..., min_length=5, max_length=500, description="Motivo do cancelamento")
 
 
+class GuestSaleCreate(BaseModel):
+    """Schema para criar venda avulsa (sem cliente cadastrado)"""
+    guest_name: Optional[str] = Field(None, max_length=255, description="Nome do cliente (opcional)")
+    items: List[SaleItemCreate] = Field(...)
+
+
+class GuestSaleResponse(BaseModel):
+    """Schema para retornar venda avulsa"""
+    id: int
+    guest_name: Optional[str] = None
+    created_by_id: int
+    total_amount: float
+    created_at: datetime
+    items: List[SaleItemResponse]
+    created_by_username: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 class SaleResponse(BaseModel):
     """Schema para retornar venda"""
     id: int

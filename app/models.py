@@ -306,7 +306,69 @@ class ProductImportBatch(Base):
     products = relationship("Produto", back_populates="import_batch")
 
 
-# Atualizar modelo Produto para incluir rastreamento de importaÃ§Ã£o
-# (Adicionar na classe Produto existente)
+# ============================================
+# TABELA: Vendas Avulsas (Sem Cliente Cadastrado)
+# ============================================
+
+class GuestSale(Base):
+    """Vendas para clientes não cadastrados"""
+    __tablename__ = "guest_sales"
+
+    id = Column(Integer, primary_key=True, index=True)
+    guest_name = Column(String(255), nullable=True)  # Nome opcional do cliente
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
+    total_amount = Column(Float, nullable=False)
+    created_at = Column(DateTime, default=_get_now)
+
+    # Relationships
+    created_by = relationship("SystemUser")
+    items = relationship("GuestSaleItem", back_populates="guest_sale", cascade="all, delete-orphan")
 
 
+class GuestSaleItem(Base):
+    """Itens de vendas avulsas"""
+    __tablename__ = "guest_sale_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    guest_sale_id = Column(Integer, ForeignKey("guest_sales.id"), nullable=False)
+    produto_id = Column(Integer, ForeignKey("produtos.id"), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    unit_price = Column(Float, nullable=False)
+    total_price = Column(Float, nullable=False)
+
+    # Relationships
+    guest_sale = relationship("GuestSale", back_populates="items")
+    produto = relationship("Produto")
+
+
+# ============================================
+# TABELA: Baixa de Produtos (Write-Off)
+# ============================================
+
+class ProductWriteOff(Base):
+    """Registro de baixa de produtos por defeito, vencimento, etc"""
+    __tablename__ = "product_writeoffs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reason = Column(String(500), nullable=False)  # Motivo da baixa
+    notes = Column(Text, nullable=True)  # Observações adicionais
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
+    created_at = Column(DateTime, default=_get_now)
+
+    # Relationships
+    created_by = relationship("SystemUser")
+    items = relationship("ProductWriteOffItem", back_populates="writeoff", cascade="all, delete-orphan")
+
+
+class ProductWriteOffItem(Base):
+    """Itens de baixa de produtos"""
+    __tablename__ = "product_writeoff_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    writeoff_id = Column(Integer, ForeignKey("product_writeoffs.id"), nullable=False)
+    produto_id = Column(Integer, ForeignKey("produtos.id"), nullable=False)
+    quantity = Column(Integer, nullable=False)  # Quantidade dada baixa
+
+    # Relationships
+    writeoff = relationship("ProductWriteOff", back_populates="items")
+    produto = relationship("Produto")

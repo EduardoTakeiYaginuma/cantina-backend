@@ -9,7 +9,7 @@ from typing import List, Optional
 from datetime import date, datetime
 
 from database import get_db
-from app.core.dependencies import get_current_user, get_current_active_admin
+from app.core.dependencies import get_current_user, get_current_active_admin, get_current_admin_or_operator
 from app.models import SystemUser, Sale, SaleItem, Customers, Produto
 from app import schemas
 from app.services.audit import AuditService
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/sales", tags=["sales"])
 # CRUD de Sales
 # ============================================
 
-@router.post("/", response_model=schemas.SaleResponse)
+@router.post("", response_model=schemas.SaleResponse)
 def create_sale(
         sale: schemas.SaleCreate,
         db: Session = Depends(get_db),
@@ -187,7 +187,7 @@ def create_sale(
         raise HTTPException(status_code=500, detail=f"Erro ao criar venda: {str(e)}")
 
 
-@router.get("/", response_model=List[schemas.SaleResponse])
+@router.get("", response_model=List[schemas.SaleResponse])
 def list_sales(
         skip: int = Query(0, description="Número de registros para pular"),
         limit: int = Query(100, description="Número máximo de registros"),
@@ -516,11 +516,11 @@ def cancel_sale(
         sale_id: int,
         cancellation: schemas.SaleCancellation,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_admin_or_operator)  # ← Admin ou Operador
 ):
     """
     Cancela uma venda (soft delete).
-    Apenas administradores podem cancelar vendas.
+    Administradores e Operadores podem cancelar vendas.
 
     - Devolve estoque
     - Devolve saldo ao cliente

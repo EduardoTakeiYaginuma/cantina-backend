@@ -98,3 +98,47 @@ class AllRestocksResponse(BaseModel):
     filters_applied: dict
     restocks: list[RestockItemResponse]
 
+
+# ============================================
+# Product Write-Off Schemas (Baixa por Defeito)
+# ============================================
+
+class ProductWriteOffItem(BaseModel):
+    """Schema para item de baixa de produto"""
+    produto_id: int
+    quantity: int = Field(..., gt=0, description="Quantidade a dar baixa")
+
+
+class ProductWriteOffCreate(BaseModel):
+    """Schema para criar baixa de produtos"""
+    items: list[ProductWriteOffItem] = Field(..., min_length=1)
+    reason: str = Field(..., min_length=5, max_length=500, description="Motivo da baixa (defeito, vencimento, etc)")
+    notes: Optional[str] = Field(None, max_length=1000, description="Observações adicionais")
+
+
+class ProductWriteOffItemResponse(BaseModel):
+    """Schema para item de baixa de produto na resposta"""
+    produto_id: int
+    produto_nome: str
+    quantity: int
+
+    class Config:
+        from_attributes = True
+
+
+class ProductWriteOffResponse(BaseModel):
+    """Schema para retornar baixa de produtos"""
+    id: int
+    reason: str
+    notes: Optional[str] = None
+    total_items: int
+    total_quantity: int
+    created_by_id: int
+    created_by_username: Optional[str] = None
+    created_at: datetime
+    items: list[ProductWriteOffItemResponse]
+
+    class Config:
+        from_attributes = True
+
+

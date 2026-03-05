@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
 from database import get_db
-from app.core.dependencies import get_current_user, require_admin
+from app.core.dependencies import get_current_user, require_admin, get_current_admin_or_operator
 from app.models import SystemUser  # ← ATUALIZADO
 from app import schemas
 from app.services.backup import BackupManager
@@ -26,7 +26,7 @@ backup_manager = BackupManager()
 @router.post("/create", response_model=schemas.BackupResponse)
 def create_backup(
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(require_admin)  # ← Apenas ADMIN
+        current_user: SystemUser = Depends(get_current_admin_or_operator)  # ← Admin ou Operador
 ):
     """
     Cria um novo backup do banco de dados. 

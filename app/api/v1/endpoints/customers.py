@@ -5,7 +5,7 @@ from sqlalchemy import func
 from typing import List, Optional
 
 from database import get_db
-from app.core.dependencies import get_current_user, get_current_active_admin
+from app.core.dependencies import get_current_user, get_current_active_admin, get_current_admin_or_operator
 from app.repositories import CustomerRepository
 from app.models import SystemUser, Customers, CustomerTipo, BalanceTransaction, Sale
 from app import schemas
@@ -166,7 +166,7 @@ def update_customer(
 def delete_customer(
         customer_id: int,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
+        current_user: SystemUser = Depends(get_current_admin_or_operator)  # ← Admin ou Operador
 ):
     """
     Deleta um cliente (soft delete - apenas desativa).
@@ -222,6 +222,53 @@ def delete_customer(
     }
 
 
+@router.patch("/{customer_id}/activate")
+def activate_customer(
+        customer_id: int,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_admin_or_operator)  # ← Admin ou Operador
+):
+    """
+    Ativa um cliente que estava desativado.
+    Permite que clientes desativados voltem a utilizar o sistema.
+    """
+    from datetime import datetime, timezone
+
+    customer_repo = CustomerRepository(db)
+    customer = customer_repo.get_by_id(customer_id)
+
+    if customer is None:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+
+    # Verificar se já está ativo
+    if customer.is_active:
+        raise HTTPException(status_code=400, detail="Cliente já está ativo")
+
+    # Ativar cliente
+    customer.is_active = True
+    customer.updated_by_id = current_user.id
+    customer.updated_at = datetime.now(timezone.utc)
+    customer_repo.update(customer)
+
+    # 🆕 AUDITORIA: Registrar ativação
+    audit = AuditService(db)
+    audit.log_customer_action(
+        customer_id=customer_id,
+        action=AuditAction.ACTIVATE,
+        created_by_id=current_user.id,
+        old_values={"is_active": False},
+        new_values={"is_active": True},
+        description=f"Cliente ativado por {current_user.username}"
+    )
+
+    return {
+        "message": "Cliente ativado com sucesso",
+        "is_active": True,
+        "customer_id": customer_id,
+        "customer_nome": customer.nome
+    }
+
+
 # ============================================
 # Gerenciamento de Saldo
 # ============================================
@@ -231,7 +278,7 @@ def manage_balance(
         customer_id: int,
         operation: schemas.BalanceOperation,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN para gerenciar saldo manualmente
+        current_user: SystemUser = Depends(get_current_admin_or_operator)  # ← Admin ou Operador
 ):
     """
     Adiciona ou remove saldo de um cliente. 
@@ -245,6 +292,9 @@ def manage_balance(
 
     if operation.amount <= 0:
         raise HTTPException(status_code=400, detail="Valor deve ser positivo")
+
+    # Guardar saldo antigo para auditoria
+    old_balance = customer.saldo
 
     # Atualizar saldo
     if operation.transaction_type == "credit":
@@ -273,6 +323,26 @@ def manage_balance(
         )
     )
     db.add(balance_transaction)
+
+    # Registrar auditoria
+    from app.services.audit import AuditService
+    from app.models_audit import AuditAction
+    audit = AuditService(db)
+
+    action = AuditAction.BALANCE_CREDIT if operation.transaction_type == "credit" else AuditAction.BALANCE_DEBIT
+    description = f"{'Crédito' if operation.transaction_type == 'credit' else 'Débito'} de R$ {operation.amount:.2f}"
+    if operation.description:
+        description += f" - {operation.description}"
+
+    audit.log_customer_action(
+        customer_id=customer_id,
+        action=action,
+        created_by_id=current_user.id,
+        old_values={"saldo": old_balance},
+        new_values={"saldo": customer.saldo, "operacao": operation.transaction_type, "valor": operation.amount},
+        description=description
+    )
+
     db.commit()
     db.refresh(balance_transaction)
 

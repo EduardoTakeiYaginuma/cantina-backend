@@ -538,12 +538,15 @@ class AuditService:
         self,
         user_id: int,
         start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None
+        end_date: Optional[datetime] = None,
+        limit: Optional[int] = None
     ):
         """
         Busca todas as ações realizadas por um usuário.
         ⚡ Usa índices idx_user_action de cada tabela
         """
+        from app.models_audit import GuestSaleAuditLog, ProductWriteOffAuditLog, SystemAuditLog
+
         # Buscar logs de clientes criados/modificados por este usuário
         customer_query = self.db.query(CustomerAuditLog)\
             .filter(CustomerAuditLog.created_by_id == user_id)
@@ -588,9 +591,47 @@ class AuditService:
 
         sale_logs = sale_query.all()
 
+        # Buscar logs de vendas avulsas criadas por este usuário
+        guest_sale_query = self.db.query(GuestSaleAuditLog)\
+            .filter(GuestSaleAuditLog.created_by_id == user_id)
+
+        if start_date:
+            guest_sale_query = guest_sale_query.filter(GuestSaleAuditLog.created_at >= start_date)
+        if end_date:
+            guest_sale_query = guest_sale_query.filter(GuestSaleAuditLog.created_at <= end_date)
+
+        guest_sale_logs = guest_sale_query.all()
+
+        # Buscar logs de baixas de produtos feitas por este usuário
+        writeoff_query = self.db.query(ProductWriteOffAuditLog)\
+            .filter(ProductWriteOffAuditLog.created_by_id == user_id)
+
+        if start_date:
+            writeoff_query = writeoff_query.filter(ProductWriteOffAuditLog.created_at >= start_date)
+        if end_date:
+            writeoff_query = writeoff_query.filter(ProductWriteOffAuditLog.created_at <= end_date)
+
+        writeoff_logs = writeoff_query.all()
+
+        # Buscar logs de ações do sistema feitas por este usuário
+        system_query = self.db.query(SystemAuditLog)\
+            .filter(SystemAuditLog.created_by_id == user_id)
+
+        if start_date:
+            system_query = system_query.filter(SystemAuditLog.created_at >= start_date)
+        if end_date:
+            system_query = system_query.filter(SystemAuditLog.created_at <= end_date)
+
+        system_logs = system_query.all()
+
         # Combinar e ordenar
-        all_logs = customer_logs + product_logs + user_logs + sale_logs
+        all_logs = (customer_logs + product_logs + user_logs + sale_logs +
+                   guest_sale_logs + writeoff_logs + system_logs)
         all_logs.sort(key=lambda x: x.created_at, reverse=True)
+
+        # Aplicar limite se especificado
+        if limit:
+            all_logs = all_logs[:limit]
 
         return all_logs
 
@@ -599,6 +640,8 @@ class AuditService:
         Busca atividade recente do sistema (todas as entidades).
         Útil para dashboard de administração.
         """
+        from app.models_audit import GuestSaleAuditLog, ProductWriteOffAuditLog, SystemAuditLog
+
         # Buscar os mais recentes de cada tipo
         customer_logs = self.db.query(CustomerAuditLog)\
             .order_by(CustomerAuditLog.created_at.desc())\
@@ -620,8 +663,24 @@ class AuditService:
             .limit(limit)\
             .all()
 
+        guest_sale_logs = self.db.query(GuestSaleAuditLog)\
+            .order_by(GuestSaleAuditLog.created_at.desc())\
+            .limit(limit)\
+            .all()
+
+        writeoff_logs = self.db.query(ProductWriteOffAuditLog)\
+            .order_by(ProductWriteOffAuditLog.created_at.desc())\
+            .limit(limit)\
+            .all()
+
+        system_logs = self.db.query(SystemAuditLog)\
+            .order_by(SystemAuditLog.created_at.desc())\
+            .limit(limit)\
+            .all()
+
         # Combinar e ordenar
-        all_logs = customer_logs + product_logs + user_logs + sale_logs
+        all_logs = (customer_logs + product_logs + user_logs + sale_logs +
+                   guest_sale_logs + writeoff_logs + system_logs)
         all_logs.sort(key=lambda x: x.created_at, reverse=True)
 
         return all_logs[:limit]
@@ -654,7 +713,8 @@ class AuditService:
 
         Retorna: (logs, total_count)
         """
-        from app.models import SystemUser, Customers, Produto
+        from app.models import SystemUser, Customers, Produto, GuestSale, ProductWriteOff
+        from app.models_audit import GuestSaleAuditLog, ProductWriteOffAuditLog, SystemAuditLog
         from sqlalchemy import or_
 
         # Configuração das entidades - Define tudo em um único lugar
@@ -686,6 +746,27 @@ class AuditService:
                 'entity_table': None,
                 'entity_name_fields': None,
                 'display_name': 'Venda'
+            },
+            'guest_sale': {
+                'model': GuestSaleAuditLog,
+                'entity_id_field': 'guest_sale_id',
+                'entity_table': GuestSale,
+                'entity_name_fields': ['guest_name'],
+                'display_name': 'Venda Avulsa'
+            },
+            'writeoff': {
+                'model': ProductWriteOffAuditLog,
+                'entity_id_field': 'writeoff_id',
+                'entity_table': ProductWriteOff,
+                'entity_name_fields': ['reason'],
+                'display_name': 'Baixa de Produto'
+            },
+            'system': {
+                'model': SystemAuditLog,
+                'entity_id_field': 'entity_id',
+                'entity_table': None,
+                'entity_name_fields': None,
+                'display_name': 'Sistema'
             }
         }
 
@@ -780,10 +861,10 @@ class AuditService:
 
         # Adicionar tipo e ID da entidade
         log.entity_type = entity_type_name
-        log.entity_id = getattr(log, config['entity_id_field'])
+        log.entity_id = getattr(log, config['entity_id_field'], None)
 
         # Buscar nome da entidade
-        if config['entity_table']:
+        if config['entity_table'] and log.entity_id:
             entity = self.db.query(config['entity_table'])\
                 .filter(config['entity_table'].id == log.entity_id)\
                 .first()
@@ -791,16 +872,36 @@ class AuditService:
             if entity:
                 # Pegar o primeiro campo de nome disponível
                 name_field = config['entity_name_fields'][0]
-                log.entity_name = getattr(entity, name_field)
+                entity_value = getattr(entity, name_field, None)
+                # Para guest_name que pode ser NULL, usar valor padrão
+                if entity_value:
+                    log.entity_name = entity_value
+                else:
+                    log.entity_name = f"{config['display_name']} #{log.entity_id}"
             else:
                 log.entity_name = f"{config['display_name']} #{log.entity_id}"
-        else:
+        elif log.entity_id:
             log.entity_name = f"{config['display_name']} #{log.entity_id}"
+        else:
+            # Para system logs, tentar extrair nome dos new_values
+            if entity_type_name == 'system' and log.new_values:
+                if isinstance(log.new_values, dict):
+                    # Tentar pegar event_name, filename ou entity_type
+                    name = (log.new_values.get('event_name') or
+                           log.new_values.get('filename') or
+                           log.new_values.get('entity_type') or
+                           'Ação do Sistema')
+                    log.entity_name = name
+                else:
+                    log.entity_name = 'Ação do Sistema'
+            else:
+                log.entity_name = config['display_name']
 
         # Buscar nome do usuário que realizou a ação
         created_by = self.db.query(SystemUser)\
             .filter(SystemUser.id == log.created_by_id)\
             .first()
+        log.created_by_username = created_by.username if created_by else "Sistema"
         log.created_by_username = created_by.username if created_by else "Sistema"
 
     def get_sale_history(self, sale_id: int):
@@ -1496,6 +1597,156 @@ class AuditService:
 
         return pdf_content, filename, total
 
+    # ============================================
+    # MÉTODOS PARA VENDAS AVULSAS
+    # ============================================
+
+    def log_guest_sale_create(
+        self,
+        guest_sale_id: int,
+        guest_name: Optional[str],
+        total_amount: float,
+        items_count: int,
+        items: list,
+        created_by_id: int
+    ):
+        """
+        Registra criação de uma venda avulsa.
+
+        Exemplo de uso:
+            audit.log_guest_sale_create(
+                guest_sale_id=1,
+                guest_name="João Visitante",
+                total_amount=25.50,
+                items_count=2,
+                items=[{"produto_id": 1, "produto_nome": "Coca-Cola", "quantity": 2, ...}],
+                created_by_id=current_user.id
+            )
+        """
+        from app.models_audit import GuestSaleAuditLog
+
+        description = f"Venda avulsa criada"
+        if guest_name:
+            description += f" para {guest_name}"
+        description += f" - {items_count} item(s) - Total: R$ {total_amount:.2f}"
+
+        log = GuestSaleAuditLog(
+            guest_sale_id=guest_sale_id,
+            action=AuditAction.GUEST_SALE,
+            created_by_id=created_by_id,
+            old_values=None,
+            new_values={
+                "guest_name": guest_name,
+                "total_amount": total_amount,
+                "items_count": items_count,
+                "items": items
+            },
+            description=description
+        )
+        self.db.add(log)
+        self.db.commit()
+        return log
+
+    def get_guest_sale_history(
+        self,
+        guest_sale_id: int,
+        limit: int = 50
+    ):
+        """
+        Busca histórico de uma venda avulsa específica.
+        """
+        from app.models_audit import GuestSaleAuditLog
+        from app.models import SystemUser
+
+        logs = self.db.query(GuestSaleAuditLog)\
+            .filter(GuestSaleAuditLog.guest_sale_id == guest_sale_id)\
+            .order_by(GuestSaleAuditLog.created_at.desc())\
+            .limit(limit)\
+            .all()
+
+        # Popular created_by_username
+        for log in logs:
+            if log.created_by_id:
+                user = self.db.query(SystemUser).filter(SystemUser.id == log.created_by_id).first()
+                log.created_by_username = user.username if user else None
+
+        return logs
+
+    # ============================================
+    # MÉTODOS PARA BAIXAS DE PRODUTOS
+    # ============================================
+
+    def log_product_writeoff(
+        self,
+        writeoff_id: int,
+        reason: str,
+        notes: Optional[str],
+        total_items: int,
+        total_quantity: int,
+        items: list,
+        created_by_id: int
+    ):
+        """
+        Registra uma baixa de produtos.
+
+        Exemplo de uso:
+            audit.log_product_writeoff(
+                writeoff_id=1,
+                reason="Produtos vencidos - lote 15/02",
+                notes="Refrigerantes com validade expirada",
+                total_items=2,
+                total_quantity=5,
+                items=[{"produto_id": 1, "produto_nome": "Coca-Cola", "quantity": 3}],
+                created_by_id=current_user.id
+            )
+        """
+        from app.models_audit import ProductWriteOffAuditLog
+
+        description = f"Baixa de {total_quantity} produto(s) em {total_items} item(s) - Motivo: {reason}"
+
+        log = ProductWriteOffAuditLog(
+            writeoff_id=writeoff_id,
+            action=AuditAction.WRITEOFF,
+            created_by_id=created_by_id,
+            old_values=None,
+            new_values={
+                "reason": reason,
+                "notes": notes,
+                "total_items": total_items,
+                "total_quantity": total_quantity,
+                "items": items
+            },
+            description=description
+        )
+        self.db.add(log)
+        self.db.commit()
+        return log
+
+    def get_writeoff_history(
+        self,
+        writeoff_id: int,
+        limit: int = 50
+    ):
+        """
+        Busca histórico de uma baixa específica.
+        """
+        from app.models_audit import ProductWriteOffAuditLog
+        from app.models import SystemUser
+
+        logs = self.db.query(ProductWriteOffAuditLog)\
+            .filter(ProductWriteOffAuditLog.writeoff_id == writeoff_id)\
+            .order_by(ProductWriteOffAuditLog.created_at.desc())\
+            .limit(limit)\
+            .all()
+
+        # Popular created_by_username
+        for log in logs:
+            if log.created_by_id:
+                user = self.db.query(SystemUser).filter(SystemUser.id == log.created_by_id).first()
+                log.created_by_username = user.username if user else None
+
+        return logs
+
 
 # ============================================
 # HELPER PARA DETECTAR MUDANÇAS
@@ -1525,4 +1776,5 @@ def get_changed_fields(old_obj, new_data: dict) -> tuple[dict, dict]:
                 new_values[field] = new_value
 
     return old_values, new_values
+
 

@@ -18,7 +18,7 @@ router = APIRouter(prefix="/event-config", tags=["event-config"])
 # Event Config CRUD
 # ============================================
 
-@router.post("/", response_model=schemas.EventConfigResponse)
+@router.post("", response_model=schemas.EventConfigResponse)
 def create_event_config(
         config: schemas.EventConfigCreate,
         db: Session = Depends(get_db),
@@ -55,6 +55,25 @@ def create_event_config(
             )
             db.add(room)
 
+        # Registrar auditoria
+        from app.services.audit import AuditService
+        from app.models_audit import AuditAction
+        audit = AuditService(db)
+
+        audit.log_system_action(
+            action=AuditAction.EVENT_CONFIG,
+            created_by_id=current_user.id,
+            entity_type="event_config",
+            entity_id=db_config.id,
+            old_values={"previous_config_id": current_config.id if current_config else None},
+            new_values={
+                "event_name": config.event_name,
+                "rooms": config.rooms,
+                "rooms_count": len(config.rooms)
+            },
+            description=f"Configuração de evento criada: {config.event_name} com {len(config.rooms)} quarto(s)"
+        )
+
         db.commit()
         db.refresh(db_config)
 
@@ -65,7 +84,7 @@ def create_event_config(
         raise HTTPException(status_code=500, detail=f"Erro ao criar configuração: {str(e)}")
 
 
-@router.get("/", response_model=List[schemas.EventConfigSummary])
+@router.get("", response_model=List[schemas.EventConfigSummary])
 def list_event_configs(
         include_inactive: bool = Query(False, description="Incluir configurações inativas"),
         skip: int = Query(0, description="Número de registros para pular"),
