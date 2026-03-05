@@ -11,14 +11,14 @@ from app.core.dependencies import get_db, get_current_active_admin, get_current_
 from app.models import SystemUser, UserRole
 from app.repositories import SystemUserRepository
 
-router = APIRouter(prefix="/auth", tags=["authentication"])
+router = APIRouter()
 
 
 # ============================================
 # Rotas
 # ============================================
 
-@router.post("/register", response_model=schemas.SystemUserResponse)
+@router.post("/usuarios", response_model=schemas.SystemUserResponse)
 def register_user(
         user: schemas.SystemUserCreate,
         db: Session = Depends(get_db),
@@ -48,7 +48,7 @@ def register_user(
     return db_user
 
 
-@router.post("/token", response_model=schemas.Token)
+@router.post("/auth/token", response_model=schemas.Token)
 def login_for_access_token(
         form_data: OAuth2PasswordRequestForm = Depends(),
         db: Session = Depends(get_db)
@@ -71,7 +71,7 @@ def login_for_access_token(
     }
 
 
-@router.get("/me", response_model=schemas.SystemUserResponse)
+@router.get("/auth/me", response_model=schemas.SystemUserResponse)
 def read_users_me(current_user: SystemUser = Depends(get_current_user)):
     """
     Retorna informações do usuário logado
@@ -79,7 +79,7 @@ def read_users_me(current_user: SystemUser = Depends(get_current_user)):
     return current_user
 
 
-@router.put("/me/password", response_model=schemas.SystemUserResponse)
+@router.put("/auth/me/password", response_model=schemas.SystemUserResponse)
 def change_my_password(
         password_data: schemas.PasswordChange,
         current_user: SystemUser = Depends(get_current_user),
@@ -103,7 +103,7 @@ def change_my_password(
     return current_user
 
 
-@router.get("/users", response_model=list[schemas.SystemUserResponse])
+@router.get("/usuarios", response_model=list[schemas.SystemUserResponse])
 def list_users(
         db: Session = Depends(get_db),
         current_admin: SystemUser = Depends(get_current_active_admin)
@@ -116,7 +116,7 @@ def list_users(
     return user_repo.get_all()
 
 
-@router.delete("/users/{user_id}")
+@router.delete("/usuarios/{user_id}")
 def deactivate_user(
         user_id: int,
         db: Session = Depends(get_db),
@@ -141,7 +141,7 @@ def deactivate_user(
 
     return {"message": "User deactivated successfully"}
 
-@router.put("/users/{user_id}/activate")
+@router.put("/usuarios/{user_id}/activate")
 def activate_user(
         user_id: int,
         db: Session = Depends(get_db),
@@ -159,7 +159,7 @@ def activate_user(
 
     return {"message": "User activated successfully"}
 
-@router.put("/users/{user_id}/role")
+@router.put("/usuarios/{user_id}/role")
 def change_user_role(
         user_id: int,
         role_data: schemas.RoleChange,
@@ -185,7 +185,7 @@ def change_user_role(
 
     return {"message": "User role changed successfully"}
 
-@router.put("/users/{user_id}/password")
+@router.put("/usuarios/{user_id}/password")
 def admin_change_user_password(
     user_id: int,
     password_data: schemas.AdminPasswordChange,

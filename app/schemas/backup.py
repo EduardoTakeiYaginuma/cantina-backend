@@ -28,3 +28,7 @@ class BackupResponse(BaseModel):
     backups: Optional[List[BackupInfo]] = None
     error: Optional[str] = None
     tables_cleared: Optional[int] = None
+    created_by: Optional[str] = None
+    restored_by: Optional[str] = None
+    deleted_by: Optional[str] = None
+    cleared_by: Optional[str] = None

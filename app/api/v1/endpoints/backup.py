@@ -68,7 +68,7 @@ def restore_backup(
     ⚠️  ATENÇÃO: Esta operação substitui todos os dados atuais!
     """
     # Validar filename (prevenir path traversal)
-    if "/" in filename or "\\" in filename or ". ." in filename:
+    if "/" in filename or "\\" in filename or ".." in filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Nome de arquivo inválido"
@@ -157,7 +157,7 @@ def get_auto_backup_status(
     }
 
 
-@router.post("/download/{filename}")
+@router.get("/download/{filename}")
 def download_backup(
         filename: str,
         current_admin: SystemUser = Depends(require_admin)
