@@ -1672,6 +1672,42 @@ class AuditService:
 
         return logs
 
+    def log_guest_sale_action(
+        self,
+        guest_sale_id: int,
+        action: AuditAction,
+        created_by_id: int,
+        old_values: dict = None,
+        new_values: dict = None,
+        description: str = None
+    ):
+        """
+        Registra uma ação genérica em uma venda avulsa (cancelamento, etc).
+
+        Exemplo de uso para cancelamento:
+            audit.log_guest_sale_action(
+                guest_sale_id=1,
+                action=AuditAction.DELETE,
+                created_by_id=current_user.id,
+                old_values={"is_cancelled": False, ...},
+                new_values={"is_cancelled": True, "cancellation_reason": "...", ...},
+                description="Venda avulsa cancelada/estornada - Motivo: ..."
+            )
+        """
+        from app.models_audit import GuestSaleAuditLog
+
+        log = GuestSaleAuditLog(
+            guest_sale_id=guest_sale_id,
+            action=action,
+            created_by_id=created_by_id,
+            old_values=old_values,
+            new_values=new_values,
+            description=description
+        )
+        self.db.add(log)
+        self.db.commit()
+        return log
+
     # ============================================
     # MÉTODOS PARA BAIXAS DE PRODUTOS
     # ============================================

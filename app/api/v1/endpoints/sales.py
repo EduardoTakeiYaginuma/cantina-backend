@@ -347,10 +347,7 @@ def get_sales_report(
     # Aplicar paginação
     sales = query.offset(skip).limit(limit).all()
 
-    # Calcular totalizadores APENAS das vendas ativas retornadas
-    total_amount_all = sum(float(sale.total_amount) for sale in sales)
-
-    # Formatar resposta
+    # Formatar resposta de vendas normais
     sales_data = []
     for sale in sales:
         sales_data.append({
@@ -385,9 +382,121 @@ def get_sales_report(
             ]
         })
 
+    # Calcular totalizadores das vendas normais
+    total_amount_all = sum(float(sale.total_amount) for sale in sales)
+
+    # Buscar vendas avulsas do mesmo período (se houver filtros de data)
+    from app.models import GuestSale
+    guest_sales_query = db.query(GuestSale)
+
+    # Filtrar vendas avulsas canceladas (opcional - seguir o mesmo padrão das vendas normais)
+    if not include_cancelled:
+        guest_sales_query = guest_sales_query.filter(GuestSale.is_cancelled == False)
+
+    # Aplicar os mesmos filtros de data para vendas avulsas
+    guest_filters = []
+    if date_from:
+        guest_filters.append(func.date(GuestSale.created_at) >= date_from)
+    if date_to:
+        guest_filters.append(func.date(GuestSale.created_at) <= date_to)
+    if created_by_id:
+        guest_filters.append(GuestSale.created_by_id == created_by_id)
+    if min_amount is not None:
+        guest_filters.append(GuestSale.total_amount >= min_amount)
+    if max_amount is not None:
+        guest_filters.append(GuestSale.total_amount <= max_amount)
+
+    if guest_filters:
+        guest_sales_query = guest_sales_query.filter(and_(*guest_filters))
+
+    # Aplicar ordenação para vendas avulsas
+    if order_by == "created_at_desc":
+        guest_sales_query = guest_sales_query.order_by(GuestSale.created_at.desc())
+    elif order_by == "created_at_asc":
+        guest_sales_query = guest_sales_query.order_by(GuestSale.created_at.asc())
+    elif order_by == "amount_desc":
+        guest_sales_query = guest_sales_query.order_by(GuestSale.total_amount.desc())
+    elif order_by == "amount_asc":
+        guest_sales_query = guest_sales_query.order_by(GuestSale.total_amount.asc())
+    else:
+        guest_sales_query = guest_sales_query.order_by(GuestSale.created_at.desc())
+
+    # Aplicar a mesma paginação (skip e limit)
+    guest_sales = guest_sales_query.offset(skip).limit(limit).all()
+
+    # Formatar vendas avulsas e adicionar à lista
+    guest_sales_data = []
+    for guest_sale in guest_sales:
+        guest_sales_data.append({
+            "id": f"guest_{guest_sale.id}",  # Prefixo para diferenciar
+            "guest_sale_id": guest_sale.id,  # ID real da venda avulsa
+            "is_guest_sale": True,  # Flag para identificar
+            "created_at": guest_sale.created_at.isoformat(),
+            "customer": {
+                "id": None,
+                "nome": guest_sale.guest_name or "Cliente Avulso",
+                "nickname": "Avulsa",
+                "tipo": "avulso"
+            },
+            "created_by": {
+                "id": guest_sale.created_by.id if guest_sale.created_by else None,
+                "username": guest_sale.created_by.username if guest_sale.created_by else "N/A"
+            },
+            "total_amount": float(guest_sale.total_amount),
+            "is_cancelled": guest_sale.is_cancelled,
+            "cancelled_at": guest_sale.cancelled_at.isoformat() if guest_sale.cancelled_at else None,
+            "cancelled_by_id": guest_sale.cancelled_by_id,
+            "cancelled_by_username": guest_sale.cancelled_by.username if guest_sale.cancelled_by else None,
+            "cancellation_reason": guest_sale.cancellation_reason,
+            "items_count": len(guest_sale.items),
+            "items": [
+                {
+                    "produto_id": item.produto.id,
+                    "produto_nome": item.produto.nome,
+                    "quantity": item.quantity,
+                    "unit_price": float(item.unit_price),
+                    "total_price": float(item.total_price)
+                }
+                for item in guest_sale.items
+            ]
+        })
+
+    # Calcular total das vendas avulsas
+    total_amount_guest_sales = sum(float(gs.total_amount) for gs in guest_sales)
+    guest_sales_count = len(guest_sales)
+
+    # Combinar vendas normais e avulsas
+    all_sales = sales_data + guest_sales_data
+
+    # Ordenar todas as vendas por data de criação
+    if order_by in ["created_at_desc", "amount_desc"]:
+        all_sales.sort(key=lambda x: x["created_at"], reverse=True)
+    elif order_by in ["created_at_asc", "amount_asc"]:
+        all_sales.sort(key=lambda x: x["created_at"])
+
+    # Se ordenação for por valor, aplicar ordenação secundária
+    if order_by == "amount_desc":
+        all_sales.sort(key=lambda x: x["total_amount"], reverse=True)
+    elif order_by == "amount_asc":
+        all_sales.sort(key=lambda x: x["total_amount"])
+
+    # Total combinado (vendas normais + vendas avulsas)
+    total_amount_combined = total_amount_all + total_amount_guest_sales
+    total_sales_combined = len(sales_data) + guest_sales_count
+
+    # Contar total combinado de registros (antes da paginação)
+    guest_total_records = db.query(func.count(GuestSale.id))
+    if guest_filters:
+        guest_total_records = guest_total_records.filter(and_(*guest_filters))
+    guest_total_records = guest_total_records.scalar() or 0
+
+    combined_total_records = total_records + guest_total_records
+
     return {
-        "total_records": total_records,
-        "showing": len(sales_data),
+        "total_records": combined_total_records,  # Total combinado
+        "regular_sales_count": total_records,  # Vendas normais
+        "guest_sales_records": guest_total_records,  # Vendas avulsas
+        "showing": len(all_sales),  # Total mostrado na página
         "skip": skip,
         "limit": limit,
         "filters_applied": {
@@ -404,9 +513,14 @@ def get_sales_report(
         },
         "summary": {
             "total_sales_amount": float(total_amount_all),
-            "average_ticket": float(total_amount_all / len(sales_data)) if sales_data else 0
+            "average_ticket": float(total_amount_all / len(sales_data)) if sales_data else 0,
+            "guest_sales_amount": float(total_amount_guest_sales),
+            "guest_sales_count": guest_sales_count,
+            "combined_total_amount": float(total_amount_combined),
+            "combined_total_count": total_sales_combined,
+            "combined_average_ticket": float(total_amount_combined / total_sales_combined) if total_sales_combined > 0 else 0
         },
-        "sales": sales_data
+        "sales": all_sales  # Lista combinada e ordenada
     }
 
 

@@ -63,6 +63,13 @@ class GuestSaleResponse(BaseModel):
     items: List[SaleItemResponse]
     created_by_username: Optional[str] = None
 
+    # Campos de cancelamento/estorno
+    is_cancelled: bool = False
+    cancelled_at: Optional[datetime] = None
+    cancelled_by_id: Optional[int] = None
+    cancelled_by_username: Optional[str] = None
+    cancellation_reason: Optional[str] = None
+
     class Config:
         from_attributes = True
 

@@ -320,8 +320,15 @@ class GuestSale(Base):
     total_amount = Column(Float, nullable=False)
     created_at = Column(DateTime, default=_get_now)
 
+    # Campos de cancelamento/estorno
+    is_cancelled = Column(Boolean, default=False, nullable=False)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancelled_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+    cancellation_reason = Column(Text, nullable=True)
+
     # Relationships
-    created_by = relationship("SystemUser")
+    created_by = relationship("SystemUser", foreign_keys=[created_by_id])
+    cancelled_by = relationship("SystemUser", foreign_keys=[cancelled_by_id])
     items = relationship("GuestSaleItem", back_populates="guest_sale", cascade="all, delete-orphan")
 
 
