@@ -63,3 +63,5 @@ cantina.db
 
 # Bun
 bun.lockb
+
+backups/
