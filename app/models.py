@@ -125,12 +125,17 @@ class Produto(Base):
     id = Column(Integer, primary_key=True, index=True)
     nome = Column(String(255), nullable=False)
     tipo = Column(Enum(ProductType), nullable=True)  # Tipo do produto (BEBIDA, DOCE, SALGADINHO)
-    valor = Column(Float, nullable=False)
+
+    # Preços e Margem de Lucro
+    preco_custo = Column(Float, nullable=True)  # Preço de compra/custo
+    preco_venda = Column(Float, nullable=False)  # Preço de venda
+    valor = Column(Float, nullable=False)  # DEPRECATED: Mantido por compatibilidade, usar preco_venda
+
     estoque = Column(Integer, default=0)
     estoque_minimo = Column(Integer, default=10)
     is_active = Column(Boolean, default=True)
 
-    # Rastreamento de importaÃ§Ã£o
+    # Rastreamento de importação
     import_batch_id = Column(Integer, ForeignKey("product_import_batches.id"), nullable=True)
 
     # Campos de auditoria
@@ -138,6 +143,21 @@ class Produto(Base):
     created_by_id = Column(Integer, ForeignKey("system_users.id"))
     updated_at = Column(DateTime, onupdate=_get_now)
     updated_by_id = Column(Integer, ForeignKey("system_users.id"))
+
+    # Propriedade calculada para margem de lucro
+    @hybrid_property
+    def margem_lucro_percentual(self):
+        """Calcula a margem de lucro percentual"""
+        if self.preco_custo and self.preco_custo > 0:
+            return ((self.preco_venda - self.preco_custo) / self.preco_custo) * 100
+        return None
+
+    @hybrid_property
+    def lucro_unitario(self):
+        """Calcula o lucro por unidade"""
+        if self.preco_custo:
+            return self.preco_venda - self.preco_custo
+        return None
 
     # Relationships
     sale_items = relationship("SaleItem", back_populates="produto")
@@ -205,9 +225,13 @@ class Restock(Base):
     quantity = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=_get_now)
 
+    # Rastreamento de importação em massa
+    batch_id = Column(Integer, ForeignKey("restock_batches.id"), nullable=True)
+
     # Relationships
     produto = relationship("Produto", back_populates="restocks")
     created_by = relationship("SystemUser", back_populates="restocks_created")
+    batch = relationship("RestockBatch", back_populates="restocks")
 
 
 # ============================================
@@ -304,6 +328,33 @@ class ProductImportBatch(Base):
     created_by = relationship("SystemUser", foreign_keys=lambda: [ProductImportBatch.created_by_id])
     rolled_back_by = relationship("SystemUser", foreign_keys=lambda: [ProductImportBatch.rolled_back_by_id])
     products = relationship("Produto", back_populates="import_batch")
+
+
+# ============================================
+# TABELA: Lotes de Reabastecimento (Para Rollback)
+# ============================================
+
+class RestockBatch(Base):
+    """Rastreia lotes de reabastecimento em massa para permitir rollback"""
+    __tablename__ = "restock_batches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    filename = Column(String(255), nullable=False)
+    succeeded_count = Column(Integer, default=0)
+    failed_count = Column(Integer, default=0)
+    not_found_count = Column(Integer, default=0)
+    status = Column(String(50), default="completed")  # completed, rolled_back
+
+    # Auditoria
+    created_at = Column(DateTime, default=_get_now)
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
+    rolled_back_at = Column(DateTime, nullable=True)
+    rolled_back_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+
+    # Relationships
+    created_by = relationship("SystemUser", foreign_keys=lambda: [RestockBatch.created_by_id])
+    rolled_back_by = relationship("SystemUser", foreign_keys=lambda: [RestockBatch.rolled_back_by_id])
+    restocks = relationship("Restock", back_populates="batch")
 
 
 # ============================================

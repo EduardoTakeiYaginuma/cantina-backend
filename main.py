@@ -85,11 +85,44 @@ app = FastAPI(
 # ============================================
 register_exception_handlers(app)
 
+# ============================================
+# Middleware para HTTPS (Cloud Run)
+# ============================================
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+
+class HTTPSRedirectMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware para lidar com proxy HTTPS do Cloud Run.
+    O Cloud Run termina HTTPS no load balancer, então precisamos
+    confiar no header X-Forwarded-Proto.
+    """
+    async def dispatch(self, request: Request, call_next):
+        # Verificar se a requisição veio via HTTPS através do proxy
+        forwarded_proto = request.headers.get("x-forwarded-proto", "")
+
+        # Cloud Run usa X-Forwarded-Proto, então confiamos nesse header
+        if forwarded_proto == "http" and os.getenv("ENVIRONMENT") == "production":
+            # Em produção, redirecionar HTTP para HTTPS
+            url = request.url.replace(scheme="https")
+            from starlette.responses import RedirectResponse
+            return RedirectResponse(url=str(url), status_code=301)
+
+        response = await call_next(request)
+        return response
+
+# Adicionar middleware HTTPS
+app.add_middleware(HTTPSRedirectMiddleware)
+
 # Configure CORS
+# Permitir origens específicas em produção
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=allowed_origins if allowed_origins != ["*"] else ["*"],
+    allow_credentials=True,  # Habilitar cookies/auth
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],

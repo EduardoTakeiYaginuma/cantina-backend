@@ -44,8 +44,22 @@ def create_event_config(
         db.add(db_config)
         db.flush()
 
-        # Criar quartos
-        for idx, room_name in enumerate(config.rooms):
+        # 🆕 Criar quarto padrão "N/A" como primeiro quarto
+        default_room = EventRoom(
+            event_config_id=db_config.id,
+            room_name="N/A",
+            display_order=0,
+            is_active=True,
+            created_by_id=current_user.id
+        )
+        db.add(default_room)
+
+        # Criar quartos adicionais (começando do índice 1)
+        for idx, room_name in enumerate(config.rooms, start=1):
+            # Ignorar se usuário tentar criar outro "N/A"
+            if room_name.strip().upper() == "N/A":
+                continue
+
             room = EventRoom(
                 event_config_id=db_config.id,
                 room_name=room_name.strip(),
@@ -60,6 +74,10 @@ def create_event_config(
         from app.models_audit import AuditAction
         audit = AuditService(db)
 
+        # Contar quartos (incluindo N/A padrão)
+        total_rooms = len(config.rooms) + 1  # +1 para o quarto padrão N/A
+        rooms_list = ["N/A"] + [r.strip() for r in config.rooms if r.strip().upper() != "N/A"]
+
         audit.log_system_action(
             action=AuditAction.EVENT_CONFIG,
             created_by_id=current_user.id,
@@ -68,10 +86,11 @@ def create_event_config(
             old_values={"previous_config_id": current_config.id if current_config else None},
             new_values={
                 "event_name": config.event_name,
-                "rooms": config.rooms,
-                "rooms_count": len(config.rooms)
+                "rooms": rooms_list,
+                "rooms_count": len(rooms_list),
+                "has_default_room": True
             },
-            description=f"Configuração de evento criada: {config.event_name} com {len(config.rooms)} quarto(s)"
+            description=f"Configuração de evento criada: {config.event_name} com {len(rooms_list)} quarto(s) (incluindo quarto padrão 'N/A')"
         )
 
         db.commit()

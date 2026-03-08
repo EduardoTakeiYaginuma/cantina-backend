@@ -34,6 +34,8 @@ from .product import (
     ProdutoResponse,
     ProdutoSalesStats,
     LowStockProduto,
+    BulkRestockResultItem,
+    BulkRestockResponse,
 )
 
 # Sale
@@ -145,6 +147,8 @@ __all__ = [
     "ProductWriteOffCreate",
     "ProductWriteOffItemResponse",
     "ProductWriteOffResponse",
+    "BulkRestockResultItem",
+    "BulkRestockResponse",
     # Sale
     "SaleItemCreate",
     "SaleItemResponse",

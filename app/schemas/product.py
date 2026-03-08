@@ -15,8 +15,10 @@ from app.models import ProductType
 class ProdutoBase(BaseModel):
     """Schema base para Produto"""
     nome: str = Field(..., min_length=2, max_length=255)
-    valor: float = Field(..., gt=0, description="Valor deve ser maior que zero")
+    valor: float = Field(..., gt=0, description="Valor deve ser maior que zero (deprecated, usar preco_venda)")
     tipo: Optional[ProductType] = Field(None, description="Tipo do produto: BEBIDA, DOCE ou SALGADINHO")
+    preco_custo: Optional[float] = Field(None, ge=0, description="Preço de compra/custo do produto")
+    preco_venda: Optional[float] = Field(None, gt=0, description="Preço de venda do produto")
 
 
 class ProdutoCreate(ProdutoBase):
@@ -28,10 +30,12 @@ class ProdutoCreate(ProdutoBase):
 class ProdutoUpdate(BaseModel):
     """Schema para atualizar Produto"""
     nome: Optional[str] = Field(None, min_length=2, max_length=255)
-    valor: Optional[float] = Field(None, gt=0)
+    valor: Optional[float] = Field(None, gt=0, description="Deprecated, usar preco_venda")
     tipo: Optional[ProductType] = Field(None, description="Tipo do produto")
     estoque: Optional[int] = Field(None, ge=0)
     estoque_minimo: Optional[int] = Field(None, ge=0)
+    preco_custo: Optional[float] = Field(None, ge=0, description="Preço de compra/custo")
+    preco_venda: Optional[float] = Field(None, gt=0, description="Preço de venda")
 
 
 class ProdutoResponse(ProdutoBase):
@@ -41,6 +45,9 @@ class ProdutoResponse(ProdutoBase):
     estoque_minimo: int
     is_active: bool
     created_at: datetime
+    # Campos calculados
+    margem_lucro_percentual: Optional[float] = Field(None, description="Margem de lucro em %")
+    lucro_unitario: Optional[float] = Field(None, description="Lucro por unidade")
 
     class Config:
         from_attributes = True
@@ -51,12 +58,16 @@ class ProdutoSalesStats(BaseModel):
     produto_id: int
     produto_nome: str
     produto_valor: float
+    preco_custo: Optional[float] = None
+    preco_venda: Optional[float] = None
     estoque_atual: int
     estoque_minimo: int
     is_active: bool
     total_vendas: int
     quantidade_vendida: int
     receita_total: float
+    custo_total: Optional[float] = None  # Custo total das unidades vendidas
+    lucro_total: Optional[float] = None  # Lucro total das vendas
 
 
 class LowStockProduto(BaseModel):
@@ -75,6 +86,11 @@ class LowStockProduto(BaseModel):
 # Restock Schemas
 # ============================================
 
+class RestockCreate(BaseModel):
+    """Schema para criar reabastecimento individual"""
+    quantity: int = Field(..., gt=0, description="Quantidade a reabastecer")
+
+
 class RestockItemResponse(BaseModel):
     """Schema para item de reabastecimento"""
     id: int
@@ -89,6 +105,27 @@ class RestockItemResponse(BaseModel):
         from_attributes = True
 
 
+class RestockResponse(BaseModel):
+    """Schema para resposta de reabastecimento individual"""
+    message: str
+    produto_id: int
+    produto_nome: str
+    estoque_anterior: int
+    quantidade_adicionada: int
+    estoque_atual: int
+    restock_id: int
+    realizado_por: str
+
+
+class RestockHistoryResponse(BaseModel):
+    """Schema para histórico de reabastecimento de um produto"""
+    produto_id: int
+    produto_nome: str
+    estoque_atual: int
+    estoque_minimo: int
+    historico_reabastecimento: list[RestockItemResponse]
+
+
 class AllRestocksResponse(BaseModel):
     """Schema para histórico completo de reabastecimentos"""
     total_restocks: int
@@ -97,6 +134,38 @@ class AllRestocksResponse(BaseModel):
     limit: int
     filters_applied: dict
     restocks: list[RestockItemResponse]
+
+
+# ============================================
+# Bulk Restock Schemas (Reabastecimento em Massa)
+# ============================================
+
+class BulkRestockResultItem(BaseModel):
+    """Schema para resultado de um item no reabastecimento em massa"""
+    row: int
+    codigo: Optional[str] = None
+    nome: Optional[str] = None
+    quantidade: Optional[int] = None  # Pode ser None quando há erro de validação
+    status: str  # 'success', 'error', 'not_found'
+    message: str
+    produto_id: Optional[int] = None
+    produto_nome_encontrado: Optional[str] = None
+    estoque_anterior: Optional[int] = None
+    estoque_atual: Optional[int] = None
+
+
+class BulkRestockResponse(BaseModel):
+    """Schema para resposta de reabastecimento em massa"""
+    success: bool
+    message: str
+    total_rows: int
+    processed: int
+    succeeded: int
+    failed: int
+    not_found: int
+    results: list[BulkRestockResultItem]
+    not_found_products: list[dict]  # Lista de produtos não encontrados
+    imported_by: str
 
 
 # ============================================
