@@ -1090,3 +1090,515 @@ def get_restock_batches_list(
         })
 
     return result
+
+
+# ============================================
+# IMPORTAÇÃO DE CLIENTES VIA EXCEL
+# ============================================
+
+def import_customers_from_excel_file(
+    file_path: str,
+    db: Session,
+    created_by_username: str = "admin"
+) -> dict:
+    """
+    Importa clientes de um arquivo Excel com duas abas: ACAMPANTES e EQUIPE
+
+    Args:
+        file_path: Caminho do arquivo Excel
+        db: Sessão do banco de dados
+        created_by_username: Username do usuário que está importando
+
+    Returns:
+        Dict com estatísticas da importação
+    """
+    from app.models import Customers, CustomerTipo, CustomerImportBatch, EventConfig, EventRoom
+
+    # Buscar usuário que está importando
+    user = db.query(SystemUser).filter(SystemUser.username == created_by_username).first()
+
+    if not user:
+        return {
+            "success": False,
+            "error": "Usuário não encontrado",
+            "imported": 0,
+            "skipped": 0,
+            "errors": 0
+        }
+
+    # Carregar planilha
+    wb = load_workbook(file_path, data_only=True)
+
+    # Verificar se existem as abas necessárias
+    if 'ACAMPANTES' not in wb.sheetnames and 'EQUIPE' not in wb.sheetnames:
+        return {
+            "success": False,
+            "error": "Nenhuma aba válida encontrada. Abas esperadas: 'ACAMPANTES' ou 'EQUIPE'",
+            "imported": 0,
+            "skipped": 0,
+            "errors": 0
+        }
+
+    # Extrair nome do arquivo
+    from pathlib import Path
+    filename = Path(file_path).name
+
+    # Criar batch para rastrear esta importação
+    batch = CustomerImportBatch(
+        filename=filename,
+        created_by_id=user.id
+    )
+    db.add(batch)
+    db.flush()  # Para obter o ID do batch
+
+    # Contadores
+    imported_count = 0
+    skipped_count = 0
+    error_count = 0
+    errors_detail = []
+
+    # Buscar quarto padrão "N/A" ou criar se não existir
+    default_room = db.query(EventRoom).filter(EventRoom.room_name == "N/A").first()
+    if not default_room:
+        # Buscar configuração de evento ativa
+        active_config = db.query(EventConfig).filter(EventConfig.is_active == True).first()
+        if active_config:
+            default_room = EventRoom(
+                room_name="N/A",
+                event_config_id=active_config.id,
+                created_by_id=user.id
+            )
+            db.add(default_room)
+            db.flush()
+
+    # ============================================
+    # PROCESSAR ABA: ACAMPANTES
+    # ============================================
+    if 'ACAMPANTES' in wb.sheetnames:
+        ws = wb['ACAMPANTES']
+
+        # Detectar linha do cabeçalho
+        header_row = None
+        for row_num in range(1, min(20, ws.max_row + 1)):
+            cell_a = ws.cell(row=row_num, column=1).value
+            if cell_a and isinstance(cell_a, str):
+                cell_a_str = str(cell_a).strip()
+                # Procurar por "Nome Completo" no cabeçalho
+                if "Nome Completo" in cell_a_str and "*" in cell_a_str:
+                    header_row = row_num
+                    break
+
+        # Se não encontrou cabeçalho, pular esta aba
+        if header_row is None:
+            errors_detail.append("ACAMPANTES: Cabeçalho não encontrado")
+        else:
+            # Dados começam na linha após o cabeçalho
+            data_start = header_row + 1
+
+            # Processar linhas de dados (limitar a 100 linhas após cabeçalho)
+            for row_num in range(data_start, min(data_start + 100, ws.max_row + 1)):
+                # Ler dados da linha
+                # Colunas:
+                # A: Nome Completo *
+                # B: Apelido *
+                # C: Quarto
+                # D: Nome do Pai
+                # E: Nome da Mãe
+                # F: Saldo Inicial
+
+                nome = ws.cell(row=row_num, column=1).value
+                nickname = ws.cell(row=row_num, column=2).value
+                quarto = ws.cell(row=row_num, column=3).value
+                nome_pai = ws.cell(row=row_num, column=4).value
+                nome_mae = ws.cell(row=row_num, column=5).value
+                saldo = ws.cell(row=row_num, column=6).value
+
+                # Pular linhas vazias (nem nome nem nickname)
+                if not nome and not nickname:
+                    continue
+
+                # Ignorar linhas que contêm emojis ou caracteres especiais (instruções)
+                if nome and isinstance(nome, str):
+                    nome_str = str(nome).strip()
+                    # Se contém emoji ou caracteres Unicode especiais, pular
+                    if any(ord(char) > 127 for char in nome_str):
+                        continue
+                    # Se é muito longo (>100 chars), provavelmente é instrução
+                    if len(nome_str) > 100:
+                        continue
+
+                # Validar campos obrigatórios
+                if not nome or not nickname:
+                    errors_detail.append(f"Linha {row_num} (ACAMPANTES): Nome Completo e Apelido são obrigatórios")
+                    error_count += 1
+                    continue
+
+                try:
+                    # Validar e processar dados
+                    nome = str(nome).strip()
+                    nickname = str(nickname).strip()
+
+                    # Verificar se cliente já existe (nome + nickname)
+                    existing = db.query(Customers).filter(
+                        Customers.nome == nome,
+                        Customers.nickname == nickname
+                    ).first()
+
+                    if existing:
+                        skipped_count += 1
+                        errors_detail.append(f"Linha {row_num} (ACAMPANTES): Cliente '{nome}' ({nickname}) já existe - ignorado")
+                        continue
+
+                    # Processar quarto
+                    quarto_final = "N/A"  # Padrão
+                    if quarto and str(quarto).strip():
+                        quarto_name = str(quarto).strip()
+                        # Verificar se o quarto existe no EventConfig
+                        room = db.query(EventRoom).filter(
+                            func.lower(EventRoom.room_name) == func.lower(quarto_name)
+                        ).first()
+                        if room:
+                            quarto_final = room.room_name
+                        else:
+                            quarto_final = quarto_name  # Usar o nome fornecido mesmo que não exista
+
+                    # Processar saldo
+                    balance = 0.0
+                    if saldo:
+                        try:
+                            balance = float(saldo)
+                        except (ValueError, TypeError):
+                            balance = 0.0
+
+                    # Criar cliente
+                    customer = Customers(
+                        nome=nome,
+                        nickname=nickname,
+                        tipo=CustomerTipo.ACAMPANTE,
+                        quarto=quarto_final,
+                        nome_pai=str(nome_pai).strip() if nome_pai else None,
+                        nome_mae=str(nome_mae).strip() if nome_mae else None,
+                        saldo=balance,
+                        import_batch_id=batch.id,
+                        created_by_id=user.id
+                    )
+
+                    db.add(customer)
+                    db.flush()
+
+                    imported_count += 1
+
+                except Exception as e:
+                    error_count += 1
+                    errors_detail.append(f"Linha {row_num} (ACAMPANTES): Erro ao importar '{nome}': {str(e)}")
+                    continue
+
+    # ============================================
+    # PROCESSAR ABA: EQUIPE
+    # ============================================
+    if 'EQUIPE' in wb.sheetnames:
+        ws = wb['EQUIPE']
+
+        # Detectar linha do cabeçalho
+        header_row = None
+        for row_num in range(1, min(20, ws.max_row + 1)):
+            cell_a = ws.cell(row=row_num, column=1).value
+            if cell_a and isinstance(cell_a, str):
+                cell_a_str = str(cell_a).strip()
+                # Procurar por "Nome Completo" no cabeçalho
+                if "Nome Completo" in cell_a_str and "*" in cell_a_str:
+                    header_row = row_num
+                    break
+
+        # Se não encontrou cabeçalho, pular esta aba
+        if header_row is None:
+            errors_detail.append("EQUIPE: Cabeçalho não encontrado")
+        else:
+            # Dados começam na linha após o cabeçalho
+            data_start = header_row + 1
+
+            # Processar linhas de dados (limitar a 100 linhas após cabeçalho)
+            for row_num in range(data_start, min(data_start + 100, ws.max_row + 1)):
+                # Ler dados da linha
+                # Colunas:
+                # A: Nome Completo *
+                # B: Apelido *
+                # C: Nome do Pai
+                # D: Nome da Mãe
+                # E: Saldo Inicial
+
+                nome = ws.cell(row=row_num, column=1).value
+                nickname = ws.cell(row=row_num, column=2).value
+                nome_pai = ws.cell(row=row_num, column=3).value
+                nome_mae = ws.cell(row=row_num, column=4).value
+                saldo = ws.cell(row=row_num, column=5).value
+
+                # Pular linhas vazias
+                if not nome and not nickname:
+                    continue
+
+                # Ignorar linhas que contêm emojis ou caracteres especiais (instruções)
+                if nome and isinstance(nome, str):
+                    nome_str = str(nome).strip()
+                    # Se contém emoji ou caracteres Unicode especiais, pular
+                    if any(ord(char) > 127 for char in nome_str):
+                        continue
+                    # Se é muito longo (>100 chars), provavelmente é instrução
+                    if len(nome_str) > 100:
+                        continue
+
+                # Validar campos obrigatórios
+                if not nome or not nickname:
+                    errors_detail.append(f"Linha {row_num} (EQUIPE): Nome Completo e Apelido são obrigatórios")
+                    error_count += 1
+                    continue
+
+                try:
+                    # Validar e processar dados
+                    nome = str(nome).strip()
+                    nickname = str(nickname).strip()
+
+                    # Verificar se cliente já existe
+                    existing = db.query(Customers).filter(
+                        Customers.nome == nome,
+                        Customers.nickname == nickname
+                    ).first()
+
+                    if existing:
+                        skipped_count += 1
+                        errors_detail.append(f"Linha {row_num} (EQUIPE): Cliente '{nome}' ({nickname}) já existe - ignorado")
+                        continue
+
+                    # Processar saldo
+                    balance = 0.0
+                    if saldo:
+                        try:
+                            balance = float(saldo)
+                        except (ValueError, TypeError):
+                            balance = 0.0
+
+                    # Criar cliente (EQUIPE não tem quarto)
+                    customer = Customers(
+                        nome=nome,
+                        nickname=nickname,
+                        tipo=CustomerTipo.EQUIPE,
+                        quarto=None,  # Equipe não tem quarto
+                        nome_pai=str(nome_pai).strip() if nome_pai else None,
+                        nome_mae=str(nome_mae).strip() if nome_mae else None,
+                        saldo=balance,
+                        import_batch_id=batch.id,
+                        created_by_id=user.id
+                    )
+
+                    db.add(customer)
+                    db.flush()
+
+                    imported_count += 1
+
+                except Exception as e:
+                    error_count += 1
+                    errors_detail.append(f"Linha {row_num} (EQUIPE): Erro ao importar '{nome}': {str(e)}")
+                    continue
+
+    # Atualizar estatísticas do batch
+    batch.imported_count = imported_count
+    batch.skipped_count = skipped_count
+    batch.error_count = error_count
+    batch.status = "completed"
+    db.commit()
+
+    # 🆕 AUDITORIA: Registrar importação
+    from app.services.audit import AuditService
+    from app.models_audit import AuditAction
+
+    audit = AuditService(db)
+    audit.log_system_action(
+        action=AuditAction.IMPORT,
+        created_by_id=user.id,
+        entity_type="customer_batch",
+        entity_id=batch.id,
+        new_values={
+            "filename": filename,
+            "imported_count": imported_count,
+            "skipped_count": skipped_count,
+            "error_count": error_count,
+            "batch_id": batch.id
+        },
+        description=f"Importação de clientes: {imported_count} cliente(s) importado(s) de '{filename}' por {user.username}"
+    )
+
+    return {
+        "success": True,
+        "batch_id": batch.id,
+        "imported": imported_count,
+        "skipped": skipped_count,
+        "errors": error_count,
+        "errors_detail": errors_detail[:20]  # Limitar a 20 erros
+    }
+
+
+async def import_customers_from_upload(
+    upload_file: UploadFile,
+    db: Session,
+    created_by_username: str = "admin"
+) -> dict:
+    """
+    Importa clientes de um arquivo Excel enviado via upload
+    """
+    import tempfile
+
+    # Salvar arquivo temporariamente
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+        content = await upload_file.read()
+        tmp_file.write(content)
+        tmp_path = tmp_file.name
+
+    try:
+        result = import_customers_from_excel_file(tmp_path, db, created_by_username)
+        return result
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def rollback_customer_batch(
+    batch_id: int,
+    db: Session,
+    rolled_back_by_username: str
+) -> dict:
+    """
+    Faz rollback de uma importação de clientes, deletando todos os clientes importados naquele batch
+    """
+    from app.models import Customers, CustomerImportBatch, BalanceTransaction, Sale
+    from app.core.timezone import get_now
+
+    batch = db.query(CustomerImportBatch).filter(CustomerImportBatch.id == batch_id).first()
+
+    if not batch:
+        return {"success": False, "error": "Batch de importação não encontrado"}
+
+    if batch.status == "rolled_back":
+        return {"success": False, "error": "Este batch já foi revertido anteriormente"}
+
+    user = db.query(SystemUser).filter(SystemUser.username == rolled_back_by_username).first()
+
+    if not user:
+        return {"success": False, "error": "Usuário não encontrado"}
+
+    customers = db.query(Customers).filter(Customers.import_batch_id == batch_id).all()
+
+    if not customers:
+        return {"success": False, "error": "Nenhum cliente encontrado para este batch"}
+
+    # Verificar se algum cliente tem transações (vendas ou saldo)
+    customers_with_transactions = []
+    for customer in customers:
+        sales_count = db.query(Sale).filter(Sale.customer_id == customer.id).count()
+        balance_trans_count = db.query(BalanceTransaction).filter(BalanceTransaction.customer_id == customer.id).count()
+        total_transactions = sales_count + balance_trans_count
+
+        if total_transactions > 0:
+            customers_with_transactions.append({
+                "id": customer.id,
+                "nome": customer.nome,
+                "nickname": customer.nickname,
+                "sales_count": sales_count,
+                "balance_transactions_count": balance_trans_count,
+                "total_transactions": total_transactions
+            })
+
+    if customers_with_transactions:
+        return {
+            "success": False,
+            "error": "Não é possível reverter: alguns clientes já têm transações",
+            "customers_with_transactions": customers_with_transactions[:5]
+        }
+
+    # Deletar clientes
+    deleted_count = 0
+    deleted_customers = []
+    for customer in customers:
+        deleted_customers.append({
+            "id": customer.id,
+            "nome": customer.nome,
+            "nickname": customer.nickname,
+            "tipo": customer.tipo.value,
+            "saldo": customer.saldo
+        })
+        db.delete(customer)
+        deleted_count += 1
+
+    # Atualizar batch
+    batch.status = "rolled_back"
+    batch.rolled_back_at = get_now()
+    batch.rolled_back_by_id = user.id
+
+    db.commit()
+
+    # 🆕 AUDITORIA: Registrar rollback
+    from app.services.audit import AuditService
+    from app.models_audit import AuditAction
+
+    audit = AuditService(db)
+    audit.log_system_action(
+        action=AuditAction.ROLLBACK,
+        created_by_id=user.id,
+        entity_type="customer_batch",
+        entity_id=batch_id,
+        old_values={
+            "status": "completed",
+            "customers_count": deleted_count,
+            "customers": deleted_customers[:10]
+        },
+        new_values={"status": "rolled_back"},
+        description=f"Rollback de importação de clientes: {deleted_count} cliente(s) deletado(s) do batch #{batch_id} (arquivo: {batch.filename}) por {user.username}"
+    )
+
+    return {
+        "success": True,
+        "batch_id": batch_id,
+        "deleted_count": deleted_count,
+        "rolled_back_by": rolled_back_by_username,
+        "rolled_back_at": batch.rolled_back_at.isoformat()
+    }
+
+
+def get_customer_import_batches_list(
+    db: Session,
+    skip: int = 0,
+    limit: int = 50,
+    include_rolled_back: bool = True
+) -> list:
+    """
+    Lista todos os batches de importação de clientes
+    """
+    from app.models import Customers, CustomerImportBatch
+
+    query = db.query(CustomerImportBatch)
+
+    if not include_rolled_back:
+        query = query.filter(CustomerImportBatch.status != "rolled_back")
+
+    batches = query.order_by(CustomerImportBatch.created_at.desc()).offset(skip).limit(limit).all()
+
+    result = []
+    for batch in batches:
+        customers_count = db.query(Customers).filter(Customers.import_batch_id == batch.id).count()
+
+        result.append({
+            "id": batch.id,
+            "filename": batch.filename,
+            "imported_count": batch.imported_count,
+            "skipped_count": batch.skipped_count,
+            "error_count": batch.error_count,
+            "current_customers_count": customers_count,
+            "status": batch.status,
+            "created_at": batch.created_at.isoformat(),
+            "created_by": batch.created_by.username if batch.created_by else None,
+            "rolled_back_at": batch.rolled_back_at.isoformat() if batch.rolled_back_at else None,
+            "rolled_back_by": batch.rolled_back_by.username if batch.rolled_back_by else None,
+            "can_rollback": batch.status == "completed" and customers_count > 0
+        })
+
+    return result
+
+

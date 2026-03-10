@@ -91,6 +91,9 @@ class Customers(Base):
     nome_mae = Column(String(255))
     is_active = Column(Boolean, default=True)
 
+    # Rastreamento de importação
+    import_batch_id = Column(Integer, ForeignKey("customer_import_batches.id"), nullable=True)
+
     # Campos de auditoria
     created_at = Column(DateTime, default=_get_now)
     created_by_id = Column(Integer, ForeignKey("system_users.id"))
@@ -430,3 +433,31 @@ class ProductWriteOffItem(Base):
     # Relationships
     writeoff = relationship("ProductWriteOff", back_populates="items")
     produto = relationship("Produto")
+
+
+# ============================================
+# TABELA: Batch de Importação de Clientes
+# ============================================
+
+class CustomerImportBatch(Base):
+    """Rastreamento de importações em lote de clientes"""
+    __tablename__ = "customer_import_batches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    filename = Column(String(255), nullable=False)
+    imported_count = Column(Integer, default=0)  # Clientes importados com sucesso
+    skipped_count = Column(Integer, default=0)   # Clientes ignorados (duplicados)
+    error_count = Column(Integer, default=0)     # Erros durante importação
+    status = Column(String(50), default="completed")  # completed, rolled_back
+
+    # Auditoria
+    created_at = Column(DateTime, default=_get_now)
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
+    rolled_back_at = Column(DateTime, nullable=True)
+    rolled_back_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+
+    # Relationships
+    created_by = relationship("SystemUser", foreign_keys=[created_by_id])
+    rolled_back_by = relationship("SystemUser", foreign_keys=[rolled_back_by_id])
+
+

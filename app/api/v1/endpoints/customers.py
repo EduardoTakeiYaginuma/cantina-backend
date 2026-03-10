@@ -1,8 +1,10 @@
 # endpoints/customers.py
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
+from pathlib import Path
 
 from database import get_db
 from app.core.dependencies import get_current_user, get_current_active_admin, get_current_admin_or_operator
@@ -495,3 +497,318 @@ def get_customer_history(
             for log in history
         ]
     }
+
+
+# ============================================
+# DOWNLOAD DE TEMPLATE PARA IMPORTAÇÃO
+# ============================================
+
+@router.get("/template/download")
+def download_customer_template(
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """
+    📥 **Download do template Excel para importação de clientes**
+
+    Retorna o arquivo Excel modelo para importação em massa de clientes.
+
+    **Estrutura do Template:**
+    - **Aba ACAMPANTES:** Nome, Apelido, Quarto, Nome do Pai, Nome da Mãe, Saldo
+    - **Aba EQUIPE:** Nome, Apelido, Nome do Pai, Nome da Mãe, Saldo
+    - **Aba INSTRUÇÕES:** Guia completo de uso
+
+    **Campos Obrigatórios:**
+    - Nome Completo (*)
+    - Apelido (*)
+
+    **Campos Opcionais:**
+    - Quarto (padrão: N/A para acampantes)
+    - Nome do Pai
+    - Nome da Mãe
+    - Saldo Inicial (padrão: R$ 0,00)
+
+    **Retorna:**
+    Arquivo Excel (.xlsx) para download
+    """
+    # Caminho do template
+    project_root = Path(__file__).parent.parent.parent.parent.parent
+    template_path = project_root / "templates" / "template_importacao_clientes.xlsx"
+
+    # Tentar alternativas
+    if not template_path.exists():
+        template_path = Path("templates") / "template_importacao_clientes.xlsx"
+
+    if not template_path.exists():
+        template_path = Path.cwd() / "templates" / "template_importacao_clientes.xlsx"
+
+    # Verificar se existe
+    if not template_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Template não encontrado. Execute: python create_customer_template.py"
+        )
+
+    filename = "template_importacao_clientes.xlsx"
+
+    return FileResponse(
+        path=str(template_path),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=filename,
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "X-Template-Version": "1.0"
+        }
+    )
+
+
+# ============================================
+# IMPORTAÇÃO DE CLIENTES VIA EXCEL
+# ============================================
+
+@router.post("/import")
+async def import_customers_from_excel(
+        file: UploadFile = File(..., description="Arquivo Excel (.xlsx) com abas ACAMPANTES e EQUIPE"),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """
+    📥 **Importar clientes em massa via Excel**
+
+    **Estrutura esperada:** Arquivo Excel com abas:
+
+    **ABA ACAMPANTES:**
+    | Col | Nome | Descrição | Obrigatório |
+    |-----|------|-----------|-------------|
+    | A | Nome Completo | Nome do acampante | Sim |
+    | B | Apelido | Apelido/nickname | Sim |
+    | C | Quarto | Número do quarto | Não* |
+    | D | Nome do Pai | Nome do pai | Não |
+    | E | Nome da Mãe | Nome da mãe | Não |
+    | F | Saldo Inicial | Saldo inicial em R$ | Não |
+
+    *Se não informado, será definido como 'N/A'
+
+    **ABA EQUIPE:**
+    | Col | Nome | Descrição | Obrigatório |
+    |-----|------|-----------|-------------|
+    | A | Nome Completo | Nome do membro | Sim |
+    | B | Apelido | Apelido/nickname | Sim |
+    | C | Nome do Pai | Nome do pai | Não |
+    | D | Nome da Mãe | Nome da mãe | Não |
+    | E | Saldo Inicial | Saldo inicial em R$ | Não |
+
+    **🔍 Validações:**
+    - Nome Completo e Apelido são obrigatórios
+    - Nickname deve ser único no sistema
+    - Linhas sem dados obrigatórios são ignoradas
+    - Duplicatas são reportadas
+
+    **📊 Resultado:**
+    - Estatísticas detalhadas da importação
+    - Lista de erros encontrados
+    - ID do batch (para rollback se necessário)
+
+    **🔄 Rollback:**
+    Cada importação gera um batch ID que permite reverter
+    todos os clientes importados de uma vez.
+
+    **Retorna:**
+    - `batch_id`: ID do lote de importação
+    - `imported`: Quantidade de clientes importados
+    - `skipped`: Clientes ignorados (duplicados)
+    - `errors`: Erros encontrados
+    """
+    from app.services.product_import import import_customers_from_upload
+
+    # Validar tipo de arquivo
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(
+            status_code=400,
+            detail="Arquivo inválido. Envie um arquivo Excel (.xlsx ou .xls)"
+        )
+
+    try:
+        # Importar clientes
+        result = await import_customers_from_upload(
+            upload_file=file,
+            db=db,
+            created_by_username=current_user.username
+        )
+
+        if not result["success"]:
+            raise HTTPException(
+                status_code=400,
+                detail=result.get("error", "Erro ao importar clientes")
+            )
+
+        # Retornar estatísticas
+        return {
+            "success": True,
+            "message": f"Importação concluída! {result['imported']} cliente(s) importado(s).",
+            "batch_id": result["batch_id"],
+            "statistics": {
+                "imported": result["imported"],
+                "skipped": result["skipped"],
+                "errors": result["errors"],
+                "total_processed": result["imported"] + result["skipped"] + result["errors"]
+            },
+            "errors_detail": result.get("errors_detail", []),
+            "imported_by": current_user.username
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao processar arquivo: {str(e)}"
+        )
+
+
+# ============================================
+# GERENCIAMENTO DE IMPORTAÇÕES (ROLLBACK)
+# ============================================
+
+@router.get("/import/batches")
+def list_customer_import_batches(
+        skip: int = Query(0, ge=0),
+        limit: int = Query(50, ge=1, le=100),
+        include_rolled_back: bool = Query(True, description="Incluir batches revertidos"),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """
+    📋 **Lista todos os batches de importação de clientes**
+
+    Permite visualizar histórico de importações e identificar quais podem ser revertidas.
+
+    **Informações retornadas:**
+    - ID do batch
+    - Nome do arquivo importado
+    - Estatísticas (importados, ignorados, erros)
+    - Status (completed, rolled_back)
+    - Datas e usuários
+    - Se pode fazer rollback
+
+    **Status do batch:**
+    - `completed`: Importação concluída com sucesso
+    - `rolled_back`: Importação foi revertida
+
+    **Pode fazer rollback quando:**
+    - Status = completed
+    - Existem clientes do batch no banco
+    - Nenhum cliente tem transações
+    """
+    from app.services.product_import import get_customer_import_batches_list
+
+    batches = get_customer_import_batches_list(
+        db=db,
+        skip=skip,
+        limit=limit,
+        include_rolled_back=include_rolled_back
+    )
+
+    return {
+        "total": len(batches),
+        "batches": batches
+    }
+
+
+@router.delete("/import/batches/{batch_id}")
+def rollback_customer_import_batch(
+        batch_id: int,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """
+    🔄 **Faz rollback (reverte) uma importação de clientes**
+
+    **Deleta todos os clientes** importados naquele batch.
+
+    **Validações:**
+    - Batch deve existir
+    - Batch não pode já ter sido revertido
+    - Nenhum cliente do batch pode ter transações (vendas, recargas)
+
+    **O que acontece:**
+    1. Verifica se clientes têm transações
+    2. Se sim, retorna erro com lista dos clientes
+    3. Se não, deleta todos os clientes do batch
+    4. Marca o batch como "rolled_back"
+    5. Registra quem fez o rollback e quando
+
+    **⚠️ ATENÇÃO:** Esta ação é irreversível!
+
+    **Retorna:**
+    - Número de clientes deletados
+    - Informações do rollback
+    """
+    from app.services.product_import import rollback_customer_batch
+
+    result = rollback_customer_batch(
+        batch_id=batch_id,
+        db=db,
+        rolled_back_by_username=current_user.username
+    )
+
+    if not result["success"]:
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("error", "Erro ao fazer rollback")
+        )
+
+    return {
+        "success": True,
+        "message": f"Rollback concluído! {result['deleted_count']} cliente(s) deletado(s).",
+        "batch_id": result["batch_id"],
+        "deleted_count": result["deleted_count"],
+        "rolled_back_by": result["rolled_back_by"],
+        "rolled_back_at": result["rolled_back_at"]
+    }
+
+
+@router.get("/import/batches/{batch_id}")
+def get_customer_import_batch_details(
+        batch_id: int,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """
+    📊 **Retorna detalhes de um batch de importação específico**
+
+    Inclui lista de clientes importados naquele batch.
+    """
+    from app.models import CustomerImportBatch
+
+    batch = db.query(CustomerImportBatch).filter(CustomerImportBatch.id == batch_id).first()
+
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch não encontrado")
+
+    # Buscar clientes do batch
+    customers = db.query(Customers).filter(Customers.import_batch_id == batch_id).all()
+
+    return {
+        "id": batch.id,
+        "filename": batch.filename,
+        "imported_count": batch.imported_count,
+        "skipped_count": batch.skipped_count,
+        "error_count": batch.error_count,
+        "status": batch.status,
+        "created_at": batch.created_at.isoformat(),
+        "created_by": batch.created_by.username if batch.created_by else None,
+        "rolled_back_at": batch.rolled_back_at.isoformat() if batch.rolled_back_at else None,
+        "rolled_back_by": batch.rolled_back_by.username if batch.rolled_back_by else None,
+        "customers": [
+            {
+                "id": c.id,
+                "nome": c.nome,
+                "nickname": c.nickname,
+                "tipo": c.tipo.value if c.tipo else None,
+                "quarto": c.quarto,
+                "saldo": c.saldo,
+                "is_active": c.is_active
+            }
+            for c in customers
+        ]
+    }
+
