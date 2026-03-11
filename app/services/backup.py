@@ -31,11 +31,33 @@ class BackupManager:
             db_path = database_url.replace("sqlite:///", "")
             if db_path.startswith("./"):
                 db_path = db_path[2:]
-            self.db_path = Path(os.path.dirname(os.path.dirname(__file__))) / db_path
+            self.db_path = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / db_path
         else:
             self.db_path = Path("cantina.db")
 
         self.db_name = self.db_path.stem
+
+        # Auto-backup config (configurável via env vars)
+        self.auto_backup_enabled = os.getenv("AUTO_BACKUP_ENABLED", "false").lower() == "true"
+        self.auto_backup_interval = int(os.getenv("AUTO_BACKUP_INTERVAL_HOURS", "24"))
+
+    def get_backup_path(self, filename: str) -> Path:
+        """Retorna o caminho completo de um arquivo de backup"""
+        return self.backup_dir / filename
+
+    def get_last_backup_info(self) -> Dict[str, any]:
+        """Retorna informações do backup mais recente"""
+        backups = list(sorted(self.backup_dir.glob("backup_*.db.gz"), reverse=True))
+        if not backups:
+            return None
+        last = backups[0]
+        stat = last.stat()
+        return {
+            "filename": last.name,
+            "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "created_at_formatted": datetime.fromtimestamp(stat.st_mtime).strftime("%d/%m/%Y %H:%M:%S"),
+            "size_mb": round(stat.st_size / (1024 * 1024), 2)
+        }
 
     def _get_event_name_for_filename(self, db: Optional[Session]) -> str:
         """Obtém o nome do evento para usar no nome do arquivo"""
@@ -204,10 +226,15 @@ class BackupManager:
                     "message": "No tables to clear"
                 }
 
+            # Tabelas que não devem ser apagadas
+            PROTECTED_TABLES = {"system_users"}
+
+            tables_to_clear = [t for t in tables if t not in PROTECTED_TABLES]
+
             # Disable foreign key checks and delete all data
             cursor.execute("PRAGMA foreign_keys = OFF")
 
-            for table in tables:
+            for table in tables_to_clear:
                 cursor.execute(f"DELETE FROM {table}")
 
             cursor.execute("PRAGMA foreign_keys = ON")
@@ -217,8 +244,8 @@ class BackupManager:
 
             return {
                 "success": True,
-                "tables_cleared": len(tables),
-                "message": f"Database cleared successfully. {len(tables)} tables emptied."
+                "tables_cleared": len(tables_to_clear),
+                "message": f"Database cleared successfully. {len(tables_to_clear)} tables emptied. Protected: {', '.join(PROTECTED_TABLES)}."
             }
 
         except Exception as e:
