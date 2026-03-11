@@ -32,3 +32,14 @@ class BackupResponse(BaseModel):
     restored_by: Optional[str] = None
     deleted_by: Optional[str] = None
     cleared_by: Optional[str] = None
+
+
+class BackupUploadResponse(BaseModel):
+    """Resposta do upload de backup"""
+    success: bool
+    message: str
+    filename: Optional[str] = None
+    original_filename: Optional[str] = None
+    size_mb: Optional[float] = None
+    uploaded_by: Optional[str] = None
+    error: Optional[str] = None

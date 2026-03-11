@@ -74,9 +74,10 @@ class BackupManager:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # Usar nome do evento se disponível
-        db_name = self._get_event_name_for_filename(db)
+        event_name = self._get_event_name_for_filename(db)
 
-        backup_filename = f"backup_{db_name}_{timestamp}.db"
+        # Formato: backup_{evento}_{data}.db.gz
+        backup_filename = f"backup_{event_name}_{timestamp}.db"
         backup_path = self.backup_dir / backup_filename
 
         try:
@@ -105,7 +106,7 @@ class BackupManager:
                 "path": str(compressed_path),
                 "size": file_size,
                 "timestamp": timestamp,
-                "event_name": db_name if db_name != self.db_name else None,
+                "event_name": event_name if event_name != self.db_name else None,
                 "message": f"Backup created successfully: {compressed_filename}"
             }
 
@@ -254,3 +255,73 @@ class BackupManager:
                 "error": str(e),
                 "message": f"Failed to clear database: {str(e)}"
             }
+
+    def upload_backup(self, file_content: bytes, original_filename: str) -> Dict[str, any]:
+        """
+        Upload e salva um arquivo de backup na pasta de backups.
+
+        Args:
+            file_content: Conteúdo do arquivo em bytes
+            original_filename: Nome original do arquivo
+
+        Returns:
+            Dict com informações do upload
+        """
+        try:
+            # Validar extensão do arquivo
+            if not original_filename.endswith('.db.gz') and not original_filename.endswith('.gz'):
+                return {
+                    "success": False,
+                    "error": "Invalid file format",
+                    "message": "Apenas arquivos .db.gz ou .gz são permitidos"
+                }
+
+            # Validar nome do arquivo (prevenir path traversal)
+            if "/" in original_filename or "\\" in original_filename or ".." in original_filename:
+                return {
+                    "success": False,
+                    "error": "Invalid filename",
+                    "message": "Nome de arquivo inválido"
+                }
+
+            # Gerar nome único se arquivo já existir
+            backup_path = self.backup_dir / original_filename
+
+            if backup_path.exists():
+                # Adicionar timestamp ao nome para evitar sobrescrever
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                name_parts = original_filename.rsplit('.', 2)  # ['backup_evento_data', 'db', 'gz']
+
+                if len(name_parts) >= 3:
+                    new_filename = f"{name_parts[0]}_uploaded_{timestamp}.{name_parts[1]}.{name_parts[2]}"
+                else:
+                    new_filename = f"{original_filename.replace('.gz', '')}_uploaded_{timestamp}.gz"
+
+                backup_path = self.backup_dir / new_filename
+            else:
+                new_filename = original_filename
+
+            # Salvar arquivo
+            with open(backup_path, 'wb') as f:
+                f.write(file_content)
+
+            # Obter informações do arquivo salvo
+            file_stat = backup_path.stat()
+
+            return {
+                "success": True,
+                "filename": new_filename,
+                "original_filename": original_filename,
+                "path": str(backup_path),
+                "size": file_stat.st_size,
+                "size_mb": round(file_stat.st_size / (1024 * 1024), 2),
+                "message": f"Backup importado com sucesso: {new_filename}"
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "message": f"Falha ao importar backup: {str(e)}"
+            }
+

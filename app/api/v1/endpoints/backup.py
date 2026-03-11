@@ -1,5 +1,5 @@
 # endpoints/backup.py
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from typing import List
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
@@ -193,3 +193,77 @@ def download_backup(
         filename=filename,
         media_type='application/octet-stream'
     )
+
+
+@router.post("/upload", response_model=schemas.BackupUploadResponse)
+async def upload_backup(
+        file: UploadFile = File(..., description="Arquivo de backup (.db.gz ou .gz)"),
+        current_admin: SystemUser = Depends(require_admin)  # ← Apenas ADMIN
+):
+    """
+    📤 **Upload de arquivo de backup**
+
+    Permite importar arquivos de backup externos para o sistema.
+    O arquivo será salvo na pasta de backups.
+
+    **Formato aceito:** `.db.gz` ou `.gz`
+
+    **Validações:**
+    - Apenas administradores podem fazer upload
+    - Arquivo deve ter extensão válida
+    - Se arquivo já existir, um timestamp será adicionado ao nome
+
+    **Exemplo de uso:**
+    - Restaurar backup de outro ambiente
+    - Importar backup de versão anterior
+    - Compartilhar dados entre instâncias
+
+    **Retorna:**
+    - Nome do arquivo salvo
+    - Tamanho do arquivo
+    - Informações do upload
+    """
+    # Validar tipo de arquivo
+    if not file.filename.endswith('.db.gz') and not file.filename.endswith('.gz'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Formato de arquivo inválido. Apenas .db.gz ou .gz são permitidos"
+        )
+
+    try:
+        # Ler conteúdo do arquivo
+        file_content = await file.read()
+
+        # Validar tamanho (máximo 500MB)
+        max_size = 500 * 1024 * 1024  # 500MB
+        if len(file_content) > max_size:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Arquivo muito grande. Tamanho máximo: 500MB"
+            )
+
+        # Fazer upload
+        result = backup_manager.upload_backup(file_content, file.filename)
+
+        if not result["success"]:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=result.get("error", "Falha ao importar backup")
+            )
+
+        return schemas.BackupUploadResponse(
+            success=True,
+            message=result["message"],
+            filename=result.get("filename"),
+            original_filename=result.get("original_filename"),
+            size_mb=result.get("size_mb"),
+            uploaded_by=current_admin.username
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao processar arquivo: {str(e)}"
+        )

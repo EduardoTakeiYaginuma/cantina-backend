@@ -105,6 +105,7 @@ from .analytics import (
 from .backup import (
     BackupInfo,
     BackupResponse,
+    BackupUploadResponse,
 )
 
 # Audit
