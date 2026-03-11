@@ -15,6 +15,8 @@ from .endpoints import (
     event_config_router,
     guest_sales_router,
     product_writeoff_router,
+    imports_router,
+    permissions_router,
 )
 
 # Router principal da v1
@@ -32,4 +34,6 @@ api_router.include_router(analytics_router, tags=["📊 Business Intelligence"])
 api_router.include_router(backup_router, tags=["backup"])
 api_router.include_router(audit_router, tags=["audit"])
 api_router.include_router(event_config_router, tags=["event-config"])
+api_router.include_router(imports_router, tags=["🔄 Importações"])
+api_router.include_router(permissions_router, tags=["🔐 Permissões"])
 __all__ = ["api_router"]

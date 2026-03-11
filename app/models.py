@@ -1,4 +1,4 @@
-﻿# models.py - VERSAO FINAL CORRIGIDA
+# models.py - VERSAO FINAL CORRIGIDA
 import enum
 from datetime import datetime
 from sqlalchemy import (
@@ -461,3 +461,83 @@ class CustomerImportBatch(Base):
     rolled_back_by = relationship("SystemUser", foreign_keys=[rolled_back_by_id])
 
 
+# ============================================
+# TABELA: Permissões Personalizadas de Usuários
+# ============================================
+
+class UserPermissions(Base):
+    """
+    Permissões granulares personalizadas por usuário.
+    Permite configurar exatamente o que cada operador pode fazer.
+
+    Se não houver registro de permissões para um usuário, usa as permissões padrão do role.
+    """
+    __tablename__ = "user_permissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("system_users.id"), unique=True, nullable=False)
+
+    # ========== USUÁRIOS ==========
+    users_create = Column(Boolean, default=False)      # Criar usuários
+    users_edit = Column(Boolean, default=False)        # Editar usuários
+    users_activate = Column(Boolean, default=False)    # Ativar/desativar usuários
+    users_view = Column(Boolean, default=True)         # Visualizar lista de usuários
+
+    # ========== CLIENTES ==========
+    customers_create = Column(Boolean, default=True)   # Criar clientes
+    customers_edit = Column(Boolean, default=True)     # Editar clientes
+    customers_activate = Column(Boolean, default=True) # Ativar/desativar clientes
+    customers_view = Column(Boolean, default=True)     # Visualizar lista de clientes
+    customers_balance = Column(Boolean, default=True)  # Creditar/debitar saldo
+    customers_import = Column(Boolean, default=False)  # Importar clientes em massa
+
+    # ========== PRODUTOS ==========
+    products_create = Column(Boolean, default=True)    # Criar produtos
+    products_edit = Column(Boolean, default=True)      # Editar produtos
+    products_activate = Column(Boolean, default=True)  # Ativar/desativar produtos
+    products_view = Column(Boolean, default=True)      # Visualizar lista de produtos
+    products_restock = Column(Boolean, default=True)   # Reabastecer estoque
+    products_import = Column(Boolean, default=True)    # Importar produtos em massa
+    products_writeoff = Column(Boolean, default=True)  # Dar baixa por defeito
+
+    # ========== VENDAS ==========
+    sales_create = Column(Boolean, default=True)       # Realizar vendas
+    sales_cancel = Column(Boolean, default=True)       # Cancelar/estornar vendas
+    sales_view = Column(Boolean, default=True)         # Visualizar vendas
+    sales_guest = Column(Boolean, default=True)        # Realizar vendas avulsas
+
+    # ========== RELATÓRIOS ==========
+    reports_view = Column(Boolean, default=True)       # Visualizar relatórios
+    reports_export = Column(Boolean, default=True)     # Exportar relatórios
+
+    # ========== ANALYTICS/DASHBOARD ==========
+    analytics_view = Column(Boolean, default=True)     # Visualizar analytics
+    dashboard_view = Column(Boolean, default=True)     # Visualizar dashboard
+
+    # ========== BACKUP ==========
+    backup_create = Column(Boolean, default=True)      # Criar backups
+    backup_restore = Column(Boolean, default=False)    # Restaurar backups
+    backup_download = Column(Boolean, default=True)    # Download de backups
+
+    # ========== AUDITORIA ==========
+    audit_view_own = Column(Boolean, default=True)     # Ver próprias ações
+    audit_view_all = Column(Boolean, default=False)    # Ver todas as ações (admin)
+
+    # ========== CONFIGURAÇÕES ==========
+    config_event = Column(Boolean, default=False)      # Configurar eventos
+    config_system = Column(Boolean, default=False)     # Configurações do sistema
+
+    # ========== IMPORTAÇÕES ==========
+    imports_view = Column(Boolean, default=True)       # Ver histórico de importações
+    imports_rollback = Column(Boolean, default=False)  # Fazer rollback de importações
+
+    # Campos de auditoria
+    created_at = Column(DateTime, default=_get_now)
+    created_by_id = Column(Integer, ForeignKey("system_users.id"))
+    updated_at = Column(DateTime, onupdate=_get_now)
+    updated_by_id = Column(Integer, ForeignKey("system_users.id"))
+
+    # Relationships
+    user = relationship("SystemUser", foreign_keys=[user_id], backref="permissions")
+    created_by = relationship("SystemUser", foreign_keys=[created_by_id])
+    updated_by = relationship("SystemUser", foreign_keys=[updated_by_id])

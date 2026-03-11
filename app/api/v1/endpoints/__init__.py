@@ -14,6 +14,8 @@ from .audit import router as audit_router
 from .event_config import router as event_config_router
 from .guest_sales import router as guest_sales_router
 from .product_writeoff import router as product_writeoff_router
+from .imports import router as imports_router
+from .permissions import router as permissions_router
 
 __all__ = [
     "auth_router",
@@ -27,4 +29,7 @@ __all__ = [
     "event_config_router",
     "guest_sales_router",
     "product_writeoff_router",
+    "imports_router",
+    "permissions_router",
 ]
+

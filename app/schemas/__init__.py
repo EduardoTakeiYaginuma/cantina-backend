@@ -136,6 +136,16 @@ from .event_config import (
     EventConfigSummary,
 )
 
+# Permissions
+from .permissions import (
+    PermissionsBase,
+    PermissionsCreate,
+    PermissionsUpdate,
+    PermissionsResponse,
+    PermissionsGrouped,
+    UserWithPermissions,
+)
+
 __all__ = [
     # User & Auth
     "SystemUserBase",
@@ -229,4 +239,11 @@ __all__ = [
     "EventConfigUpdate",
     "EventConfigResponse",
     "EventConfigSummary",
+    # Permissions
+    "PermissionsBase",
+    "PermissionsCreate",
+    "PermissionsUpdate",
+    "PermissionsResponse",
+    "PermissionsGrouped",
+    "UserWithPermissions",
 ]
