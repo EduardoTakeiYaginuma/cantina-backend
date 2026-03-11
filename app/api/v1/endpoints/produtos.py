@@ -6,7 +6,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 
 from database import get_db
-from app.core.dependencies import get_current_user, get_current_active_admin
+from app.core.dependencies import get_current_user, get_current_active_admin, get_current_admin_or_operator
 from app.core.timezone import get_now
 from app.repositories import ProdutoRepository  # ← NOVO
 from app.models import SystemUser, Produto, SaleItem, Restock  # ← ATUALIZADO
@@ -37,14 +37,19 @@ def create_produto(
             detail="Produto com este nome já existe"
         )
 
+    # Determinar preço de venda (usar preco_venda se fornecido, senão usar valor)
+    preco_venda_final = produto.preco_venda if produto.preco_venda is not None else produto.valor
+
     # Criar produto
     db_produto = Produto(
         nome=produto.nome,
-        tipo=produto.tipo,  # ← Adicionar tipo
-        valor=produto.valor,
+        tipo=produto.tipo,
+        valor=produto.valor,  # Mantido por compatibilidade
+        preco_custo=produto.preco_custo,
+        preco_venda=preco_venda_final,
         estoque=produto.estoque or 0,
         estoque_minimo=produto.estoque_minimo or 10,
-        created_by_id=current_user.id  # ← Registra quem criou
+        created_by_id=current_user.id
     )
 
     created_produto = produto_repo.create(db_produto)
@@ -59,6 +64,8 @@ def create_produto(
             "nome": created_produto.nome,
             "tipo": created_produto.tipo.value if created_produto.tipo else None,
             "valor": created_produto.valor,
+            "preco_custo": created_produto.preco_custo,
+            "preco_venda": created_produto.preco_venda,
             "estoque": created_produto.estoque,
             "estoque_minimo": created_produto.estoque_minimo
         },
@@ -149,19 +156,51 @@ def update_produto(
     if old_values:
         audit = AuditService(db)
 
-        # Se mudou o preço, registrar ação ESPECIAL de mudança de preço
+        # Se mudou o preço de venda ou custo, registrar ação ESPECIAL de mudança de preço
+        price_changes = {}
+        if "preco_venda" in old_values:
+            price_changes["preco_venda"] = {
+                "old": old_values["preco_venda"],
+                "new": new_values["preco_venda"]
+            }
+        if "preco_custo" in old_values:
+            price_changes["preco_custo"] = {
+                "old": old_values["preco_custo"],
+                "new": new_values["preco_custo"]
+            }
         if "valor" in old_values:
+            price_changes["valor"] = {
+                "old": old_values["valor"],
+                "new": new_values["valor"]
+            }
+
+        if price_changes:
+            description_parts = []
+            for field, change in price_changes.items():
+                field_label = {
+                    "preco_venda": "Preço de venda",
+                    "preco_custo": "Preço de custo",
+                    "valor": "Valor"
+                }.get(field, field)
+                old_val = change["old"] if change["old"] is not None else "não definido"
+                new_val = change["new"] if change["new"] is not None else "não definido"
+                if isinstance(old_val, (int, float)):
+                    old_val = f"R${old_val:.2f}"
+                if isinstance(new_val, (int, float)):
+                    new_val = f"R${new_val:.2f}"
+                description_parts.append(f"{field_label}: {old_val} → {new_val}")
+
             audit.log_product_action(
                 produto_id=produto_id,
                 action=AuditAction.PRICE_CHANGE,
                 created_by_id=current_user.id,
-                old_values={"valor": old_values["valor"]},
-                new_values={"valor": new_values["valor"]},
-                description=f"Preço alterado de R${old_values['valor']:.2f} para R${new_values['valor']:.2f} por {current_user.username}"
+                old_values={k: price_changes[k]["old"] for k in price_changes.keys()},
+                new_values={k: price_changes[k]["new"] for k in price_changes.keys()},
+                description=f"Preços alterados: {', '.join(description_parts)} por {current_user.username}"
             )
 
         # Se mudou outras coisas, registrar como UPDATE
-        other_changes = {k: v for k, v in old_values.items() if k != "valor"}
+        other_changes = {k: v for k, v in old_values.items() if k not in ["valor", "preco_venda", "preco_custo"]}
         if other_changes:
             audit.log_product_action(
                 produto_id=produto_id,
@@ -263,6 +302,20 @@ def restock_produto(
         quantity=restock_data.quantity
     )
     db.add(restock)
+
+    # Registrar auditoria
+    from app.services.audit import AuditService
+    from app.models_audit import AuditAction
+    audit = AuditService(db)
+    audit.log_product_action(
+        produto_id=produto_id,
+        action=AuditAction.RESTOCK,
+        created_by_id=current_user.id,
+        old_values={"estoque": old_stock},
+        new_values={"estoque": produto.estoque, "quantidade_adicionada": restock_data.quantity},
+        description=f"Reabastecimento de {restock_data.quantity} unidade(s) - Estoque: {old_stock} → {produto.estoque}"
+    )
+
     db.commit()
     db.refresh(restock)
 
@@ -650,6 +703,347 @@ def download_template(
             "X-Template-Version": "1.0"
         }
     )
+
+
+# ============================================
+# REABASTECIMENTO EM MASSA VIA EXCEL
+# ============================================
+
+@router.get("/restock/template/download")
+def download_restock_template(
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_admin_or_operator)  # Admin ou Operador
+):
+    """
+    📥 **Download do template Excel para reabastecimento em massa**
+
+    Retorna o arquivo Excel modelo para reabastecimento de múltiplos produtos de uma vez.
+
+    **Estrutura do Template:**
+    - **Coluna A:** Código do Produto (ID) - opcional
+    - **Coluna B:** Nome do Produto - opcional
+    - **Coluna C:** Quantidade a Reabastecer - obrigatório
+
+    **Como usar:**
+    1. Baixe este template
+    2. Preencha com código OU nome do produto (ou ambos)
+    3. Informe a quantidade a reabastecer
+    4. Faça upload via endpoint `/api/v1/produtos/restock/import`
+
+    **Busca de Produtos:**
+    - Por código: Busca exata pelo ID
+    - Por nome: Busca case-insensitive (não diferencia maiúsculas/minúsculas)
+    - Se fornecer ambos: Usa código primeiro, depois nome
+
+    **Validações:**
+    - Pelo menos código OU nome deve ser fornecido
+    - Quantidade deve ser número inteiro positivo
+    - Produtos não encontrados serão reportados
+
+    **Retorna:**
+    Arquivo Excel (.xlsx) para download
+    """
+    from fastapi.responses import FileResponse
+    from pathlib import Path
+
+    # Caminho do template
+    project_root = Path(__file__).parent.parent.parent.parent.parent
+    template_path = project_root / "templates" / "template_reabastecimento_produtos.xlsx"
+
+    # Tentar alternativas
+    if not template_path.exists():
+        template_path = Path("templates") / "template_reabastecimento_produtos.xlsx"
+
+    if not template_path.exists():
+        template_path = Path.cwd() / "templates" / "template_reabastecimento_produtos.xlsx"
+
+    # Verificar se existe
+    if not template_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Template de reabastecimento não encontrado. Execute: python create_restock_template.py"
+        )
+
+    filename = "template_reabastecimento_produtos.xlsx"
+
+    return FileResponse(
+        path=str(template_path),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=filename,
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "X-Template-Version": "1.0"
+        }
+    )
+
+
+@router.post("/restock/import", response_model=schemas.BulkRestockResponse)
+async def import_bulk_restock(
+        file: UploadFile = File(..., description="Arquivo Excel (.xlsx) com aba REABASTECIMENTO"),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_admin_or_operator)  # Admin ou Operador
+):
+    """
+    📦 **Importar reabastecimentos em massa via Excel**
+
+    Reabastece múltiplos produtos de uma vez usando planilha Excel.
+
+    **Estrutura esperada:** Aba REABASTECIMENTO com colunas:
+
+    | Col | Nome | Descrição | Obrigatório |
+    |-----|------|-----------|-------------|
+    | A | Código do Produto | ID numérico do produto | Não* |
+    | B | Nome do Produto | Nome exato do produto | Não* |
+    | C | Quantidade | Quantidade a reabastecer | Sim |
+
+    *Pelo menos código OU nome deve ser fornecido
+
+    **🔍 Lógica de Busca:**
+
+    1. **Por Código (Coluna A):** Busca exata pelo ID do produto
+    2. **Por Nome (Coluna B):** Busca case-insensitive
+    3. **Por Ambos:** Tenta código primeiro, depois nome
+
+    **Exemplos válidos:**
+    ```
+    # Usando apenas código
+    1 | | 50
+
+    # Usando apenas nome
+    | Coca-Cola 2L | 30
+
+    # Usando ambos (mais seguro)
+    1 | Coca-Cola 2L | 50
+    ```
+
+    **🎯 Validações:**
+    - Quantidade deve ser número inteiro positivo
+    - Produto deve existir no sistema
+    - Estoque é incrementado (não substitui)
+
+    **📊 Resultado:**
+    - Lista detalhada de cada linha processada
+    - Status: success, error, not_found
+    - Produtos não encontrados são reportados
+    - Estatísticas completas da importação
+
+    **⚠️ Produtos Não Encontrados:**
+    Se produtos não forem encontrados, eles são listados separadamente
+    para você verificar se há erro de digitação ou se precisa cadastrá-los.
+
+    **🔒 Auditoria:**
+    Todos os reabastecimentos são registrados nos logs de auditoria
+    com informações de quem fez e quando.
+
+    **Retorna:**
+    - Estatísticas da importação
+    - Lista detalhada de cada produto processado
+    - Lista de produtos não encontrados
+    """
+    from app.services.product_import import import_bulk_restock_from_upload
+
+    # Validar tipo de arquivo
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(
+            status_code=400,
+            detail="Arquivo inválido. Envie um arquivo Excel (.xlsx ou .xls)"
+        )
+
+    try:
+        # Importar reabastecimentos
+        result = await import_bulk_restock_from_upload(
+            upload_file=file,
+            db=db,
+            created_by_username=current_user.username
+        )
+
+        if not result["success"]:
+            raise HTTPException(
+                status_code=400,
+                detail=result.get("error", "Erro ao importar reabastecimentos")
+            )
+
+        # Preparar mensagem de resumo
+        message_parts = []
+        if result["succeeded"] > 0:
+            message_parts.append(f"{result['succeeded']} produto(s) reabastecido(s) com sucesso")
+        if result["not_found"] > 0:
+            message_parts.append(f"{result['not_found']} produto(s) não encontrado(s)")
+        if result["failed"] > 0:
+            message_parts.append(f"{result['failed']} erro(s)")
+
+        message = "Importação concluída! " + ", ".join(message_parts) + "."
+
+        return {
+            "success": True,
+            "message": message,
+            "total_rows": result["total_rows"],
+            "processed": result["processed"],
+            "succeeded": result["succeeded"],
+            "failed": result["failed"],
+            "not_found": result["not_found"],
+            "results": result["results"],
+            "not_found_products": result["not_found_products"],
+            "imported_by": current_user.username,
+            "batch_id": result.get("batch_id")  # ← Adicionar batch_id
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao processar arquivo: {str(e)}"
+        )
+
+
+# ============================================
+# GERENCIAMENTO DE BATCHES DE REABASTECIMENTO
+# ============================================
+
+@router.get("/restock/batches")
+def list_restock_batches(
+        skip: int = Query(0, ge=0),
+        limit: int = Query(50, ge=1, le=100),
+        include_rolled_back: bool = Query(True, description="Incluir batches revertidos"),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_admin_or_operator)
+):
+    """
+    📋 **Lista todos os batches de reabastecimento**
+
+    Permite visualizar histórico de importações de reabastecimento e identificar quais podem ser revertidas.
+
+    **Informações retornadas:**
+    - ID do batch
+    - Nome do arquivo importado
+    - Estatísticas (sucesso, falha, não encontrados)
+    - Status (completed, rolled_back)
+    - Datas e usuários
+    - Se pode fazer rollback
+
+    **Status do batch:**
+    - `completed`: Importação concluída com sucesso
+    - `rolled_back`: Importação foi revertida
+
+    **Pode fazer rollback quando:**
+    - Status = completed
+    - Existem restocks do batch no banco
+    - Há estoque suficiente para reverter
+    """
+    from app.services.product_import import get_restock_batches_list
+
+    batches = get_restock_batches_list(
+        db=db,
+        skip=skip,
+        limit=limit,
+        include_rolled_back=include_rolled_back
+    )
+
+    return {
+        "total": len(batches),
+        "batches": batches
+    }
+
+
+@router.delete("/restock/batches/{batch_id}")
+def rollback_restock_batch(
+        batch_id: int,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """
+    ↩️ **Faz rollback (reverte) uma importação de reabastecimento**
+
+    **Reverte todos os reabastecimentos** importados naquele batch.
+
+    **Validações:**
+    - Batch deve existir
+    - Batch não pode já ter sido revertido
+    - Deve haver estoque suficiente para reverter
+
+    **O que acontece:**
+    1. Verifica se há estoque suficiente
+    2. Subtrai quantidade de cada restock do estoque
+    3. Deleta registros de restock
+    4. Marca o batch como "rolled_back"
+    5. Registra quem fez o rollback e quando
+    6. Cria log de auditoria
+
+    **ATENÇÃO:** Esta ação é irreversível!
+
+    **Retorna:**
+    - Número de reabastecimentos revertidos
+    - Informações do rollback
+    """
+    from app.services.product_import import rollback_restock_batch as do_rollback
+
+    result = do_rollback(
+        batch_id=batch_id,
+        db=db,
+        rolled_back_by_username=current_user.username
+    )
+
+    if not result["success"]:
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("error", "Erro ao fazer rollback")
+        )
+
+    return {
+        "success": True,
+        "message": f"Rollback concluído! {result['reverted_count']} reabastecimento(s) revertido(s).",
+        "batch_id": result["batch_id"],
+        "reverted_count": result["reverted_count"],
+        "rolled_back_by": result["rolled_back_by"],
+        "rolled_back_at": result["rolled_back_at"],
+        "reverted_restocks": result.get("reverted_restocks", [])
+    }
+
+
+@router.get("/restock/batches/{batch_id}")
+def get_restock_batch_details(
+        batch_id: int,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """
+    🔍 **Retorna detalhes de um batch de reabastecimento específico**
+
+    Inclui lista de reabastecimentos importados naquele batch.
+    """
+    from app.models import RestockBatch
+
+    batch = db.query(RestockBatch).filter(RestockBatch.id == batch_id).first()
+
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch não encontrado")
+
+    # Buscar restocks do batch
+    restocks = db.query(Restock).filter(Restock.batch_id == batch_id).all()
+
+    return {
+        "id": batch.id,
+        "filename": batch.filename,
+        "succeeded_count": batch.succeeded_count,
+        "failed_count": batch.failed_count,
+        "not_found_count": batch.not_found_count,
+        "status": batch.status,
+        "created_at": batch.created_at.isoformat(),
+        "created_by": batch.created_by.username if batch.created_by else None,
+        "rolled_back_at": batch.rolled_back_at.isoformat() if batch.rolled_back_at else None,
+        "rolled_back_by": batch.rolled_back_by.username if batch.rolled_back_by else None,
+        "restocks": [
+            {
+                "id": r.id,
+                "produto_id": r.produto.id,
+                "produto_nome": r.produto.nome,
+                "quantity": r.quantity,
+                "created_at": r.created_at.isoformat()
+            }
+            for r in restocks
+        ]
+    }
+
+
 # ============================================
 # IMPORTACAO DE PRODUTOS VIA EXCEL
 # ============================================
@@ -660,19 +1054,65 @@ async def import_products_from_excel(
         current_user: SystemUser = Depends(get_current_active_admin)
 ):
     """
-    Importar produtos em massa via Excel
-    Estrutura esperada: Aba CONSOLIDADO com colunas:
-    1. Categoria (Doces, Salgados ou Bebidas)
-    2. Nome do Produto (obrigatorio)
-    3. Preco Unitario em R$ (obrigatorio, > 0)
-    4. Num de Fardos (opcional)
-    5. Qtd por Fardo (opcional)
-    6. Quantidade Total (calculada ou manual)
-    7. Estoque Minimo (opcional, padrao: 10)
-    Mapeamento de Categorias:
-    - Doces -> ProductType.DOCE
-    - Salgados -> ProductType.SALGADINHO
-    - Bebidas -> ProductType.BEBIDA
+    📥 **Importar produtos em massa via Excel**
+
+    **Estrutura esperada:** Aba CONSOLIDADO com colunas:
+
+    | Col | Nome | Descrição |
+    |-----|------|-----------|
+    | 1 | Categoria | Doces, Salgados ou Bebidas |
+    | 2 | Nome do Produto | Obrigatório |
+    | 3 | Preço de Compra (R$) | Custo - Ver lógica abaixo |
+    | 4 | Preço Unitário/Venda (R$) | Preço de venda |
+    | 5 | Nº de Fardos | Opcional |
+    | 6 | Qtd por Fardo | Opcional |
+    | 7 | Quantidade Total | Calculada ou manual |
+    | 8 | Estoque Mínimo | Opcional (padrão: 10) |
+
+    **🔍 Lógica de Precificação:**
+
+    **Cenário 1: COM fardos** (colunas 5 e 6 preenchidas)
+    - Coluna 3 = Custo do FARDO completo (ex: R$ 40,00 por fardo)
+    - Sistema calcula: `custo_unitario = custo_fardo / qtd_por_fardo`
+    - Exemplo: R$ 40,00 ÷ 10 unidades = R$ 4,00 por unidade
+    - Coluna 4 = Preço de venda unitário (ex: R$ 8,00)
+    - Estoque = `num_fardos × qtd_por_fardo`
+
+    **Cenário 2: SEM fardos** (colunas 5 e 6 vazias)
+    - Coluna 3 = Custo unitário (ex: R$ 3,00)
+    - Coluna 4 = Preço de venda unitário (ex: R$ 5,00)
+    - Estoque = Valor da coluna 7 (Quantidade Total)
+
+    **Mapeamento de Categorias:**
+    - `Doces` → ProductType.DOCE
+    - `Salgados` → ProductType.SALGADINHO
+    - `Bebidas` → ProductType.BEBIDA
+
+    **Exemplos:**
+
+    ```
+    Exemplo 1 - COM FARDOS:
+    Categoria | Produto   | Compra  | Venda | Fardos | Qtd/Fardo | Total | Min
+    Doces     | Snickers  | R$ 40   | R$ 8  | 8      | 10        | 80    | 10
+    → Custo unitário: R$ 40 ÷ 10 = R$ 4,00
+    → Preço venda: R$ 8,00
+    → Estoque: 8 × 10 = 80 unidades
+    → Estoque mínimo: 10
+
+    Exemplo 2 - SEM FARDOS:
+    Categoria | Produto   | Compra  | Venda | Fardos | Qtd/Fardo | Total | Min
+    Doces     | Lacta     | R$ 3    | R$ 5  | 0      | 0         | 100   | 10
+    → Custo unitário: R$ 3,00
+    → Preço venda: R$ 5,00
+    → Estoque: 100 unidades
+    → Estoque mínimo: 10
+    ```
+
+    **Retorna:**
+    - `batch_id`: ID do lote de importação (para rollback)
+    - `imported`: Quantidade de produtos importados
+    - `skipped`: Produtos ignorados (duplicados)
+    - `errors`: Erros encontrados
     """
     from app.services.product_import import import_products_from_upload
     # Validar tipo de arquivo

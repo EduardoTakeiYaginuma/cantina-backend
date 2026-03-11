@@ -91,6 +91,9 @@ class Customers(Base):
     nome_mae = Column(String(255))
     is_active = Column(Boolean, default=True)
 
+    # Rastreamento de importação
+    import_batch_id = Column(Integer, ForeignKey("customer_import_batches.id"), nullable=True)
+
     # Campos de auditoria
     created_at = Column(DateTime, default=_get_now)
     created_by_id = Column(Integer, ForeignKey("system_users.id"))
@@ -125,12 +128,17 @@ class Produto(Base):
     id = Column(Integer, primary_key=True, index=True)
     nome = Column(String(255), nullable=False)
     tipo = Column(Enum(ProductType), nullable=True)  # Tipo do produto (BEBIDA, DOCE, SALGADINHO)
-    valor = Column(Float, nullable=False)
+
+    # Preços e Margem de Lucro
+    preco_custo = Column(Float, nullable=True)  # Preço de compra/custo
+    preco_venda = Column(Float, nullable=False)  # Preço de venda
+    valor = Column(Float, nullable=False)  # DEPRECATED: Mantido por compatibilidade, usar preco_venda
+
     estoque = Column(Integer, default=0)
     estoque_minimo = Column(Integer, default=10)
     is_active = Column(Boolean, default=True)
 
-    # Rastreamento de importaÃ§Ã£o
+    # Rastreamento de importação
     import_batch_id = Column(Integer, ForeignKey("product_import_batches.id"), nullable=True)
 
     # Campos de auditoria
@@ -138,6 +146,21 @@ class Produto(Base):
     created_by_id = Column(Integer, ForeignKey("system_users.id"))
     updated_at = Column(DateTime, onupdate=_get_now)
     updated_by_id = Column(Integer, ForeignKey("system_users.id"))
+
+    # Propriedade calculada para margem de lucro
+    @hybrid_property
+    def margem_lucro_percentual(self):
+        """Calcula a margem de lucro percentual"""
+        if self.preco_custo and self.preco_custo > 0:
+            return ((self.preco_venda - self.preco_custo) / self.preco_custo) * 100
+        return None
+
+    @hybrid_property
+    def lucro_unitario(self):
+        """Calcula o lucro por unidade"""
+        if self.preco_custo:
+            return self.preco_venda - self.preco_custo
+        return None
 
     # Relationships
     sale_items = relationship("SaleItem", back_populates="produto")
@@ -205,9 +228,13 @@ class Restock(Base):
     quantity = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=_get_now)
 
+    # Rastreamento de importação em massa
+    batch_id = Column(Integer, ForeignKey("restock_batches.id"), nullable=True)
+
     # Relationships
     produto = relationship("Produto", back_populates="restocks")
     created_by = relationship("SystemUser", back_populates="restocks_created")
+    batch = relationship("RestockBatch", back_populates="restocks")
 
 
 # ============================================
@@ -306,7 +333,131 @@ class ProductImportBatch(Base):
     products = relationship("Produto", back_populates="import_batch")
 
 
-# Atualizar modelo Produto para incluir rastreamento de importaÃ§Ã£o
-# (Adicionar na classe Produto existente)
+# ============================================
+# TABELA: Lotes de Reabastecimento (Para Rollback)
+# ============================================
+
+class RestockBatch(Base):
+    """Rastreia lotes de reabastecimento em massa para permitir rollback"""
+    __tablename__ = "restock_batches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    filename = Column(String(255), nullable=False)
+    succeeded_count = Column(Integer, default=0)
+    failed_count = Column(Integer, default=0)
+    not_found_count = Column(Integer, default=0)
+    status = Column(String(50), default="completed")  # completed, rolled_back
+
+    # Auditoria
+    created_at = Column(DateTime, default=_get_now)
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
+    rolled_back_at = Column(DateTime, nullable=True)
+    rolled_back_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+
+    # Relationships
+    created_by = relationship("SystemUser", foreign_keys=lambda: [RestockBatch.created_by_id])
+    rolled_back_by = relationship("SystemUser", foreign_keys=lambda: [RestockBatch.rolled_back_by_id])
+    restocks = relationship("Restock", back_populates="batch")
+
+
+# ============================================
+# TABELA: Vendas Avulsas (Sem Cliente Cadastrado)
+# ============================================
+
+class GuestSale(Base):
+    """Vendas para clientes não cadastrados"""
+    __tablename__ = "guest_sales"
+
+    id = Column(Integer, primary_key=True, index=True)
+    guest_name = Column(String(255), nullable=True)  # Nome opcional do cliente
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
+    total_amount = Column(Float, nullable=False)
+    created_at = Column(DateTime, default=_get_now)
+
+    # Campos de cancelamento/estorno
+    is_cancelled = Column(Boolean, default=False, nullable=False)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancelled_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+    cancellation_reason = Column(Text, nullable=True)
+
+    # Relationships
+    created_by = relationship("SystemUser", foreign_keys=[created_by_id])
+    cancelled_by = relationship("SystemUser", foreign_keys=[cancelled_by_id])
+    items = relationship("GuestSaleItem", back_populates="guest_sale", cascade="all, delete-orphan")
+
+
+class GuestSaleItem(Base):
+    """Itens de vendas avulsas"""
+    __tablename__ = "guest_sale_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    guest_sale_id = Column(Integer, ForeignKey("guest_sales.id"), nullable=False)
+    produto_id = Column(Integer, ForeignKey("produtos.id"), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    unit_price = Column(Float, nullable=False)
+    total_price = Column(Float, nullable=False)
+
+    # Relationships
+    guest_sale = relationship("GuestSale", back_populates="items")
+    produto = relationship("Produto")
+
+
+# ============================================
+# TABELA: Baixa de Produtos (Write-Off)
+# ============================================
+
+class ProductWriteOff(Base):
+    """Registro de baixa de produtos por defeito, vencimento, etc"""
+    __tablename__ = "product_writeoffs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reason = Column(String(500), nullable=False)  # Motivo da baixa
+    notes = Column(Text, nullable=True)  # Observações adicionais
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
+    created_at = Column(DateTime, default=_get_now)
+
+    # Relationships
+    created_by = relationship("SystemUser")
+    items = relationship("ProductWriteOffItem", back_populates="writeoff", cascade="all, delete-orphan")
+
+
+class ProductWriteOffItem(Base):
+    """Itens de baixa de produtos"""
+    __tablename__ = "product_writeoff_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    writeoff_id = Column(Integer, ForeignKey("product_writeoffs.id"), nullable=False)
+    produto_id = Column(Integer, ForeignKey("produtos.id"), nullable=False)
+    quantity = Column(Integer, nullable=False)  # Quantidade dada baixa
+
+    # Relationships
+    writeoff = relationship("ProductWriteOff", back_populates="items")
+    produto = relationship("Produto")
+
+
+# ============================================
+# TABELA: Batch de Importação de Clientes
+# ============================================
+
+class CustomerImportBatch(Base):
+    """Rastreamento de importações em lote de clientes"""
+    __tablename__ = "customer_import_batches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    filename = Column(String(255), nullable=False)
+    imported_count = Column(Integer, default=0)  # Clientes importados com sucesso
+    skipped_count = Column(Integer, default=0)   # Clientes ignorados (duplicados)
+    error_count = Column(Integer, default=0)     # Erros durante importação
+    status = Column(String(50), default="completed")  # completed, rolled_back
+
+    # Auditoria
+    created_at = Column(DateTime, default=_get_now)
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
+    rolled_back_at = Column(DateTime, nullable=True)
+    rolled_back_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+
+    # Relationships
+    created_by = relationship("SystemUser", foreign_keys=[created_by_id])
+    rolled_back_by = relationship("SystemUser", foreign_keys=[rolled_back_by_id])
 
 

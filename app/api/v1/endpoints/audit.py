@@ -1,4 +1,4 @@
-# app/api/v1/endpoints/audit.py
+﻿# app/api/v1/endpoints/audit.py
 """
 Endpoints para consultar logs de auditoria.
 Apenas administradores têm acesso.
@@ -12,7 +12,7 @@ from io import StringIO
 import csv
 
 from app import schemas
-from app.core.dependencies import get_db, get_current_active_admin, get_current_user
+from app.core.dependencies import get_db, get_current_active_admin, get_current_user, get_current_admin_or_operator
 from app.models import SystemUser, Customers, Produto, Sale, SaleItem
 from app.services.audit import AuditService
 
@@ -28,8 +28,8 @@ def search_audit_logs(
         start_date: Optional[datetime] = Query(None, description="Data inicial (ISO format: 2026-01-01T00:00:00)"),
         end_date: Optional[datetime] = Query(None, description="Data final (ISO format: 2026-12-31T23:59:59)"),
         user_id: Optional[int] = Query(None, description="ID do usuário que realizou a ação"),
-        action: Optional[str] = Query(None, description="Tipo de ação (CREATE, UPDATE, DELETE, ACTIVATE, DEACTIVATE, PRICE_CHANGE, SALE, etc)"),
-        entity_type: Optional[str] = Query(None, description="Módulo: customer, product, user, sale"),
+        action: Optional[str] = Query(None, description="Tipo de ação (CREATE, UPDATE, DELETE, ACTIVATE, DEACTIVATE, PRICE_CHANGE, RESTOCK, BALANCE_CREDIT, BALANCE_DEBIT, GUEST_SALE, WRITEOFF, IMPORT, ROLLBACK, EVENT_CONFIG, etc)"),
+        entity_type: Optional[str] = Query(None, description="Módulo: customer, product, user, sale, guest_sale, writeoff, system"),
         entity_id: Optional[int] = Query(None, description="ID específico da entidade"),
         entity_name: Optional[str] = Query(None, description="Nome da entidade (busca parcial por nome do cliente, produto, username)"),
         search: Optional[str] = Query(None, description="Busca por texto na descrição ou valores"),
@@ -44,17 +44,33 @@ def search_audit_logs(
     **Filtros disponíveis:**
     - **Período**: `start_date` e `end_date` (formato ISO)
     - **Usuário**: `user_id` (quem realizou a ação)
-    - **Tipo de ação**: `action` (CREATE, UPDATE, DELETE, etc)
-    - **Módulo**: `entity_type` (customer, product, user, sale)
+    - **Tipo de ação**: `action` (todas as 16 ações disponíveis)
+    - **Módulo**: `entity_type` (customer, product, user, sale, guest_sale, writeoff, system)
     - **Entidade específica**: `entity_id` (ID do cliente, produto, etc)
     - **Nome da entidade**: `entity_name` (busca parcial por nome)
     - **Busca por texto**: `search` (busca na descrição e valores)
     - **Paginação**: `limit` e `offset`
 
+    **🎯 Tipos de ação disponíveis (16 ações):**
+    - **Gerais**: CREATE, UPDATE, DELETE, ACTIVATE, DEACTIVATE
+    - **Produtos**: PRICE_CHANGE, RESTOCK
+    - **Clientes**: BALANCE_CREDIT, BALANCE_DEBIT
+    - **Vendas**: SALE, GUEST_SALE, WRITEOFF
+    - **Usuários**: PASSWORD_CHANGE
+    - **Sistema**: IMPORT, ROLLBACK, EVENT_CONFIG
+
     **Exemplos de uso:**
     - Todas as ações de um usuário: `?user_id=1`
     - Vendas em período: `?entity_type=sale&start_date=2026-01-01T00:00:00`
     - Mudanças de preço: `?action=PRICE_CHANGE&entity_type=product`
+    - Reabastecimentos: `?action=RESTOCK&entity_type=product`
+    - Créditos de saldo: `?action=BALANCE_CREDIT&entity_type=customer`
+    - Débitos de saldo: `?action=BALANCE_DEBIT&entity_type=customer`
+    - Vendas avulsas: `?entity_type=guest_sale` ou `?action=GUEST_SALE`
+    - Baixas de produtos: `?entity_type=writeoff` ou `?action=WRITEOFF`
+    - Importações: `?entity_type=system&action=IMPORT`
+    - Rollbacks: `?entity_type=system&action=ROLLBACK`
+    - Configs de eventos: `?entity_type=system&action=EVENT_CONFIG`
     - Busca por cliente "João": `?entity_name=João&entity_type=customer`
     - Busca por produto "Coca": `?entity_name=Coca&entity_type=product`
 
@@ -227,18 +243,26 @@ def get_recent_activity(
     }
 
 
-@router.get("/user-activity/{user_id}", response_model=List[schemas.AuditLogResponse])
+@router.get("/user-activity", response_model=List[schemas.AuditLogResponse])
 def get_user_activity_report(
-        user_id: int,
         start_date: Optional[datetime] = Query(None, description="Data inicial (ISO format)"),
         end_date: Optional[datetime] = Query(None, description="Data final (ISO format)"),
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_admin_or_operator)  # Admin ou Operador
 ):
     """
-    Retorna todas as ações realizadas por um usuário específico.
-    Útil para rastreabilidade e auditoria de ações de funcionários.
+    Retorna todas as ações realizadas pelo usuário logado (próprias ações).
+
+    O usuário é identificado automaticamente pelo token JWT.
+    Operadores e administradores podem ver suas próprias ações.
+
+    **Parâmetros opcionais:**
+    - start_date: Data inicial para filtrar (formato ISO)
+    - end_date: Data final para filtrar (formato ISO)
     """
+    # Usa o ID do usuário logado automaticamente
+    user_id = current_user.id
+
     audit = AuditService(db)
     logs = audit.get_user_activity(user_id, start_date, end_date)
 
@@ -248,18 +272,61 @@ def get_user_activity_report(
         if hasattr(log, 'customer_id'):
             entity_type = "customer"
             entity_id = log.customer_id
+            entity = db.query(Customers).filter(Customers.id == entity_id).first()
+            entity_name = entity.nome if entity else f"Cliente #{entity_id}"
         elif hasattr(log, 'produto_id'):
             entity_type = "product"
             entity_id = log.produto_id
+            entity = db.query(Produto).filter(Produto.id == entity_id).first()
+            entity_name = entity.nome if entity else f"Produto #{entity_id}"
         elif hasattr(log, 'user_id'):
             entity_type = "user"
             entity_id = log.user_id
+            entity = db.query(SystemUser).filter(SystemUser.id == entity_id).first()
+            entity_name = entity.username if entity else f"Usuário #{entity_id}"
+        elif hasattr(log, 'sale_id'):
+            entity_type = "sale"
+            entity_id = log.sale_id
+            entity_name = f"Venda #{entity_id}"
+        elif hasattr(log, 'guest_sale_id'):
+            # Venda avulsa
+            from app.models import GuestSale
+            entity_type = "guest_sale"
+            entity_id = log.guest_sale_id
+            guest_sale = db.query(GuestSale).filter(GuestSale.id == entity_id).first()
+            if guest_sale and guest_sale.guest_name:
+                entity_name = f"Venda Avulsa - {guest_sale.guest_name}"
+            else:
+                entity_name = f"Venda Avulsa #{entity_id}"
+        elif hasattr(log, 'writeoff_id'):
+            # Baixa de produto
+            from app.models import ProductWriteOff
+            entity_type = "writeoff"
+            entity_id = log.writeoff_id
+            writeoff = db.query(ProductWriteOff).filter(ProductWriteOff.id == entity_id).first()
+            if writeoff:
+                entity_name = f"Baixa: {writeoff.reason[:50]}"  # Limitar a 50 caracteres
+            else:
+                entity_name = f"Baixa #{entity_id}"
+        elif hasattr(log, 'entity_type') and hasattr(log, 'entity_id'):
+            # Log de sistema (importações, configs, etc)
+            entity_type = "system"
+            entity_id = log.entity_id
+            # Tentar extrair nome dos new_values
+            if log.new_values and isinstance(log.new_values, dict):
+                entity_name = (log.new_values.get('event_name') or
+                             log.new_values.get('filename') or
+                             log.new_values.get('entity_type') or
+                             'Ação do Sistema')
+            else:
+                entity_name = 'Ação do Sistema'
         else:
             continue
 
         formatted_logs.append({
             "entity_type": entity_type,
             "entity_id": entity_id,
+            "entity_name": entity_name,
             "action": log.action.value,
             "created_at": log.created_at,
             "old_values": log.old_values,
@@ -268,7 +335,6 @@ def get_user_activity_report(
         })
 
     return formatted_logs
-
 
 # ============================================
 # ESTATÍSTICAS DE AUDITORIA
@@ -306,17 +372,17 @@ def export_audit_logs(
         start_date: Optional[datetime] = Query(None, description="Data inicial (ISO format: 2026-01-01T00:00:00)"),
         end_date: Optional[datetime] = Query(None, description="Data final (ISO format: 2026-12-31T23:59:59)"),
         user_id: Optional[int] = Query(None, description="ID do usuário que realizou a ação"),
-        action: Optional[str] = Query(None, description="Tipo de ação (CREATE, UPDATE, DELETE, etc)"),
-        entity_type: Optional[str] = Query(None, description="Módulo: customer, product, user, sale"),
+        action: Optional[str] = Query(None, description="Tipo de ação (CREATE, UPDATE, DELETE, ACTIVATE, DEACTIVATE, PRICE_CHANGE, RESTOCK, BALANCE_CREDIT, BALANCE_DEBIT, SALE, GUEST_SALE, WRITEOFF, PASSWORD_CHANGE, IMPORT, ROLLBACK, EVENT_CONFIG)"),
+        entity_type: Optional[str] = Query(None, description="Módulo: customer, product, user, sale, guest_sale, writeoff, system"),
         entity_id: Optional[int] = Query(None, description="ID específico da entidade"),
         entity_name: Optional[str] = Query(None, description="Nome da entidade (busca parcial)"),
         search: Optional[str] = Query(None, description="Busca por texto na descrição"),
         limit: int = Query(10000, description="Máximo de registros (default: 10000)", ge=1, le=50000),
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_admin_or_operator)  # Admin ou Operador
 ):
     """
-    📥 **Exportar logs de auditoria para CSV**
+    Exportar logs de auditoria para CSV
 
     **Suporta os mesmos filtros da busca:**
     - Período (start_date, end_date)
@@ -384,17 +450,17 @@ def export_audit_logs_json(
         start_date: Optional[datetime] = Query(None, description="Data inicial"),
         end_date: Optional[datetime] = Query(None, description="Data final"),
         user_id: Optional[int] = Query(None, description="ID do usuário"),
-        action: Optional[str] = Query(None, description="Tipo de ação"),
-        entity_type: Optional[str] = Query(None, description="Módulo"),
+        action: Optional[str] = Query(None, description="Tipo de ação (CREATE, UPDATE, DELETE, ACTIVATE, DEACTIVATE, PRICE_CHANGE, RESTOCK, BALANCE_CREDIT, BALANCE_DEBIT, SALE, GUEST_SALE, WRITEOFF, PASSWORD_CHANGE, IMPORT, ROLLBACK, EVENT_CONFIG)"),
+        entity_type: Optional[str] = Query(None, description="Módulo (customer, product, user, sale, guest_sale, writeoff, system)"),
         entity_id: Optional[int] = Query(None, description="ID específico"),
         entity_name: Optional[str] = Query(None, description="Nome da entidade"),
         search: Optional[str] = Query(None, description="Busca por texto"),
         limit: int = Query(10000, ge=1, le=50000),
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_admin_or_operator)  # Admin ou Operador
 ):
     """
-    📥 **Exportar logs de auditoria para JSON**
+    Exportar logs de auditoria para JSON
 
     **Vantagens do JSON:**
     - ✅ Ideal para APIs e integração com sistemas
@@ -457,17 +523,17 @@ def export_audit_logs_excel(
         start_date: Optional[datetime] = Query(None, description="Data inicial"),
         end_date: Optional[datetime] = Query(None, description="Data final"),
         user_id: Optional[int] = Query(None, description="ID do usuário"),
-        action: Optional[str] = Query(None, description="Tipo de ação"),
-        entity_type: Optional[str] = Query(None, description="Módulo"),
+        action: Optional[str] = Query(None, description="Tipo de ação (CREATE, UPDATE, DELETE, ACTIVATE, DEACTIVATE, PRICE_CHANGE, RESTOCK, BALANCE_CREDIT, BALANCE_DEBIT, SALE, GUEST_SALE, WRITEOFF, PASSWORD_CHANGE, IMPORT, ROLLBACK, EVENT_CONFIG)"),
+        entity_type: Optional[str] = Query(None, description="Módulo (customer, product, user, sale, guest_sale, writeoff, system)"),
         entity_id: Optional[int] = Query(None, description="ID específico"),
         entity_name: Optional[str] = Query(None, description="Nome da entidade"),
         search: Optional[str] = Query(None, description="Busca por texto"),
         limit: int = Query(10000, ge=1, le=50000),
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_admin_or_operator)  # Admin ou Operador
 ):
     """
-    📥 **Exportar logs de auditoria para Excel (XLSX)**
+    Exportar logs de auditoria para Excel (XLSX)
 
     **Vantagens do Excel:**
     - ✅ Formatação rica (cores, fontes, bordas)
@@ -534,17 +600,17 @@ def export_audit_logs_pdf(
         start_date: Optional[datetime] = Query(None, description="Data inicial"),
         end_date: Optional[datetime] = Query(None, description="Data final"),
         user_id: Optional[int] = Query(None, description="ID do usuário"),
-        action: Optional[str] = Query(None, description="Tipo de ação"),
-        entity_type: Optional[str] = Query(None, description="Módulo"),
+        action: Optional[str] = Query(None, description="Tipo de ação (CREATE, UPDATE, DELETE, ACTIVATE, DEACTIVATE, PRICE_CHANGE, RESTOCK, BALANCE_CREDIT, BALANCE_DEBIT, SALE, GUEST_SALE, WRITEOFF, PASSWORD_CHANGE, IMPORT, ROLLBACK, EVENT_CONFIG)"),
+        entity_type: Optional[str] = Query(None, description="Módulo (customer, product, user, sale, guest_sale, writeoff, system)"),
         entity_id: Optional[int] = Query(None, description="ID específico"),
         entity_name: Optional[str] = Query(None, description="Nome da entidade"),
         search: Optional[str] = Query(None, description="Busca por texto"),
         limit: int = Query(1000, ge=1, le=5000, description="Máximo: 5000 (PDF tem limite menor)"),
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_admin_or_operator)  # Admin ou Operador
 ):
     """
-    📥 **Exportar logs de auditoria para PDF**
+    Exportar logs de auditoria para PDF
 
     **Vantagens do PDF:**
     - ✅ Formato fixo e imutável (não editável)
@@ -797,13 +863,12 @@ def export_sales_audit_report(
         detail_level: str = Query("summary", description="Nível de detalhe: summary (resumo) ou detailed (com itens)"),
 
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_admin_or_operator)  # Admin ou Operador
 ):
     """
-    📥 **Exportar relatório de auditoria de vendas**
+    Exportar relatório de auditoria de vendas
 
     Exporta relatório completo de vendas em diferentes formatos.
-    Apenas administradores podem exportar.
 
     **Formatos disponíveis:**
     - **CSV**: Planilha compatível com Excel
@@ -885,7 +950,7 @@ def export_sales_audit_report(
             # Cabeçalho com filtros aplicados
             writer.writerow(["=== RELATÓRIO DE AUDITORIA DE VENDAS ==="])
             writer.writerow(["Gerado em:", datetime.now().strftime("%d/%m/%Y %H:%M:%S")])
-            writer.writerow(["Gerado por:", current_admin.username])
+            writer.writerow(["Gerado por:", current_user.username])
             writer.writerow([])
             writer.writerow(["=== FILTROS APLICADOS ==="])
             writer.writerow(["Data inicial:", date_from.strftime("%d/%m/%Y") if date_from else "Não especificada"])
@@ -942,7 +1007,7 @@ def export_sales_audit_report(
             # Cabeçalho com filtros
             writer.writerow(["=== RELATÓRIO DETALHADO DE AUDITORIA DE VENDAS ==="])
             writer.writerow(["Gerado em:", datetime.now().strftime("%d/%m/%Y %H:%M:%S")])
-            writer.writerow(["Gerado por:", current_admin.username])
+            writer.writerow(["Gerado por:", current_user.username])
             writer.writerow([])
             writer.writerow(["=== FILTROS APLICADOS ==="])
             writer.writerow(["Data inicial:", date_from.strftime("%d/%m/%Y") if date_from else "Não especificada"])
@@ -1040,7 +1105,7 @@ def export_sales_audit_report(
         report = {
             "metadata": {
                 "generated_at": datetime.now().isoformat(),
-                "generated_by": current_admin.username,
+                "generated_by": current_user.username,
                 "filters_applied": {
                     "date_from": date_from.isoformat() if date_from else None,
                     "date_to": date_to.isoformat() if date_to else None,
@@ -1073,3 +1138,4 @@ def export_sales_audit_report(
 
     else:
         raise HTTPException(status_code=400, detail="Formato não suportado. Use 'csv' ou 'json'.")
+

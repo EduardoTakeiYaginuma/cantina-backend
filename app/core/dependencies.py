@@ -116,5 +116,26 @@ def require_active_user(current_user: SystemUser = Depends(get_current_user)) ->
     return current_user
 
 
+def require_admin_or_operator(current_user: SystemUser = Depends(get_current_user)) -> SystemUser:
+    """
+    Dependency: Verifica se o usuário é ADMIN ou OPERADOR.
+    Levanta 403 se não tiver permissão.
+
+    Use para ações que operadores também podem realizar:
+    - Criar/editar produtos
+    - Realizar vendas
+    - Creditar/debitar clientes
+    - Criar backups
+    - Exportar relatórios
+    """
+    if current_user.role not in [UserRole.ADMIN, UserRole.OPERADOR]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions. Admin or Operator role required."
+        )
+    return current_user
+
+
 # Alias para compatibilidade (se preferir o nome antigo)
 get_current_active_admin = require_admin
+get_current_admin_or_operator = require_admin_or_operator

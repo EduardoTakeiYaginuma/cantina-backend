@@ -13,7 +13,7 @@ def _get_now():
 
 
 class AuditAction(str, enum.Enum):
-    """Tipos de aÃ§Ãµes rastreadas"""
+    """Tipos de ações rastreadas"""
     CREATE = "create"
     UPDATE = "update"
     DELETE = "delete"
@@ -25,8 +25,11 @@ class AuditAction(str, enum.Enum):
     BALANCE_DEBIT = "balance_debit"
     SALE = "sale"
     PASSWORD_CHANGE = "password_change"
-    IMPORT = "import"  # ImportaÃ§Ã£o em massa de produtos
-    ROLLBACK = "rollback"  # Rollback de importaÃ§Ã£o
+    IMPORT = "import"  # Importação em massa de produtos
+    ROLLBACK = "rollback"  # Rollback de importação
+    GUEST_SALE = "guest_sale"  # Venda avulsa (sem cliente cadastrado)
+    WRITEOFF = "writeoff"  # Baixa de produto por defeito/vencimento
+    EVENT_CONFIG = "event_config"  # Configuração de evento
 
 
 # ============================================
@@ -214,3 +217,62 @@ class SystemAuditLog(Base):
         Index('idx_system_entity', 'entity_type', 'entity_id'),
     )
 
+
+# ============================================
+# TABELA 7: Auditoria de Vendas Avulsas
+# ============================================
+
+class GuestSaleAuditLog(Base):
+    """
+    Registra ações relacionadas a vendas avulsas.
+    Útil para rastrear vendas para clientes não cadastrados.
+    """
+    __tablename__ = "guest_sale_audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    guest_sale_id = Column(Integer, nullable=False)  # ID da venda avulsa
+    action = Column(Enum(AuditAction), nullable=False)
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
+    created_at = Column(DateTime, default=_get_now, index=True)
+
+    old_values = Column(JSON, nullable=True)
+    new_values = Column(JSON, nullable=True)
+    description = Column(Text, nullable=True)
+
+    # Relationships
+    created_by = relationship("SystemUser", backref="guest_sale_audits")
+
+    __table_args__ = (
+        Index('idx_guest_sale_date', 'guest_sale_id', 'created_at'),
+        Index('idx_guest_sale_action', 'action', 'created_at'),
+    )
+
+
+# ============================================
+# TABELA 8: Auditoria de Baixas de Produtos
+# ============================================
+
+class ProductWriteOffAuditLog(Base):
+    """
+    Registra ações relacionadas a baixas de produtos.
+    Crucial para rastreabilidade de produtos com defeito, vencidos, etc.
+    """
+    __tablename__ = "product_writeoff_audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    writeoff_id = Column(Integer, nullable=False)  # ID do registro de baixa
+    action = Column(Enum(AuditAction), nullable=False)
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
+    created_at = Column(DateTime, default=_get_now, index=True)
+
+    old_values = Column(JSON, nullable=True)
+    new_values = Column(JSON, nullable=True)
+    description = Column(Text, nullable=True)
+
+    # Relationships
+    created_by = relationship("SystemUser", backref="writeoff_audits")
+
+    __table_args__ = (
+        Index('idx_writeoff_date', 'writeoff_id', 'created_at'),
+        Index('idx_writeoff_action', 'action', 'created_at'),
+    )

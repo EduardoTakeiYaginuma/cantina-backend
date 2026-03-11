@@ -16,10 +16,16 @@ class DashboardStats(BaseModel):
     total_equipe: int
     total_produtos: int
     low_stock_produtos: int
-    total_sales_today: float
-    total_sales_count_today: int
+    total_sales_today: float  # Total combinado (vendas normais + avulsas)
+    total_sales_count_today: int  # Total combinado de vendas
     customers_negative_balance: int
     total_balance: float
+
+    # Detalhamento de vendas (opcional)
+    regular_sales_today: Optional[float] = None  # Apenas vendas normais
+    regular_sales_count_today: Optional[int] = None
+    guest_sales_today: Optional[float] = None  # Apenas vendas avulsas
+    guest_sales_count_today: Optional[int] = None
 
 
 class TopSeller(BaseModel):

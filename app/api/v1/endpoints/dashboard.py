@@ -61,12 +61,28 @@ def get_dashboard_stats(
     # Vendas de hoje
     today = date.today()
 
+    # Vendas normais de hoje
     total_sales_today = db.query(func.sum(Sale.total_amount)).filter(
+        func.date(Sale.created_at) == today
     ).scalar() or 0
 
     total_sales_count_today = db.query(func.count(Sale.id)).filter(
         func.date(Sale.created_at) == today
     ).scalar() or 0
+
+    # Vendas avulsas de hoje
+    from app.models import GuestSale
+    guest_sales_today = db.query(func.sum(GuestSale.total_amount)).filter(
+        func.date(GuestSale.created_at) == today
+    ).scalar() or 0
+
+    guest_sales_count_today = db.query(func.count(GuestSale.id)).filter(
+        func.date(GuestSale.created_at) == today
+    ).scalar() or 0
+
+    # Total combinado (vendas normais + vendas avulsas)
+    total_combined_today = float(total_sales_today) + float(guest_sales_today)
+    total_combined_count_today = total_sales_count_today + guest_sales_count_today
 
     # Customers com saldo negativo
     customers_negative_balance = db.query(func.count(Customers.id)).filter(
@@ -83,10 +99,15 @@ def get_dashboard_stats(
         total_equipe=total_equipe,
         total_produtos=total_produtos,
         low_stock_produtos=low_stock_produtos,
-        total_sales_today=float(total_sales_today),
-        total_sales_count_today=total_sales_count_today,
+        total_sales_today=float(total_combined_today),
+        total_sales_count_today=total_combined_count_today,
         customers_negative_balance=customers_negative_balance,
-        total_balance=float(total_balance)
+        total_balance=float(total_balance),
+        # Estatísticas separadas (para transparência)
+        regular_sales_today=float(total_sales_today),
+        regular_sales_count_today=total_sales_count_today,
+        guest_sales_today=float(guest_sales_today),
+        guest_sales_count_today=guest_sales_count_today
     )
 
 
@@ -296,7 +317,11 @@ def get_top_products(
         func.sum(SaleItem.quantity).label('quantidade_vendida'),
         func.count(SaleItem.id).label('numero_vendas'),
         func.sum(SaleItem.total_price).label('receita_total')
-    ).join(SaleItem).join(Sale)
+    ).select_from(Produto).join(
+        SaleItem, SaleItem.produto_id == Produto.id
+    ).join(
+        Sale, Sale.id == SaleItem.sale_id
+    )
 
     if period_days:
         date_limit = date.today() - timedelta(days=period_days)
