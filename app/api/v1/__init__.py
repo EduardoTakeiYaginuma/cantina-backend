@@ -9,6 +9,7 @@ from .endpoints import (
     produtos_router,
     sales_router,
     dashboard_router,
+    analytics_router,
     backup_router,
     audit_router,
     event_config_router,
@@ -27,6 +28,7 @@ api_router.include_router(sales_router, tags=["sales"])
 api_router.include_router(guest_sales_router, tags=["guest-sales"])
 api_router.include_router(product_writeoff_router, tags=["product-writeoff"])
 api_router.include_router(dashboard_router, tags=["dashboard"])
+api_router.include_router(analytics_router, tags=["📊 Business Intelligence"])
 api_router.include_router(backup_router, tags=["backup"])
 api_router.include_router(audit_router, tags=["audit"])
 api_router.include_router(event_config_router, tags=["event-config"])

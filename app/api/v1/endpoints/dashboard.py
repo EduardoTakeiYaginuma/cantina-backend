@@ -317,7 +317,11 @@ def get_top_products(
         func.sum(SaleItem.quantity).label('quantidade_vendida'),
         func.count(SaleItem.id).label('numero_vendas'),
         func.sum(SaleItem.total_price).label('receita_total')
-    ).join(SaleItem).join(Sale)
+    ).select_from(Produto).join(
+        SaleItem, SaleItem.produto_id == Produto.id
+    ).join(
+        Sale, Sale.id == SaleItem.sale_id
+    )
 
     if period_days:
         date_limit = date.today() - timedelta(days=period_days)

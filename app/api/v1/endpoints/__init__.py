@@ -8,6 +8,7 @@ from .customers import router as customers_router
 from .produtos import router as produtos_router
 from .sales import router as sales_router
 from .dashboard import router as dashboard_router
+from .analytics import router as analytics_router
 from .backup import router as backup_router
 from .audit import router as audit_router
 from .event_config import router as event_config_router
@@ -20,6 +21,7 @@ __all__ = [
     "produtos_router",
     "sales_router",
     "dashboard_router",
+    "analytics_router",
     "backup_router",
     "audit_router",
     "event_config_router",
