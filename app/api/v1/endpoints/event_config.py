@@ -18,7 +18,7 @@ router = APIRouter(prefix="/event-config", tags=["event-config"])
 # Event Config CRUD
 # ============================================
 
-@router.post("", response_model=schemas.EventConfigResponse)
+@router.post("/", response_model=schemas.EventConfigResponse)
 def create_event_config(
         config: schemas.EventConfigCreate,
         db: Session = Depends(get_db),
@@ -103,7 +103,7 @@ def create_event_config(
         raise HTTPException(status_code=500, detail=f"Erro ao criar configuração: {str(e)}")
 
 
-@router.get("", response_model=List[schemas.EventConfigSummary])
+@router.get("/", response_model=List[schemas.EventConfigSummary])
 def list_event_configs(
         include_inactive: bool = Query(False, description="Incluir configurações inativas"),
         skip: int = Query(0, description="Número de registros para pular"),
