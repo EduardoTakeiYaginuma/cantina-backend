@@ -26,7 +26,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY ../.. .
 
 # Criar diretórios necessários
-RUN mkdir -p backups
+RUN mkdir -p data backups
 
 # Expor a porta da aplicação
 EXPOSE 8000

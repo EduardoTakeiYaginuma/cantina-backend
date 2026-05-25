@@ -9,12 +9,8 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Mapear código para desenvolvimento (remover em produção)
-      - .:/app
-      # Persistir banco de dados
-      - ./cantina.db:/app/cantina.db
-      # Persistir backups
-      - ./backups:/app/backups
+      # Persistir banco de dados e backups via named volume
+      - cantina_data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
     restart: unless-stopped
@@ -24,4 +20,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+volumes:
+  cantina_data:
 
