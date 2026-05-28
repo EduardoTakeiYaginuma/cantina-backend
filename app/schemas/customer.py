@@ -4,7 +4,7 @@ Schemas relacionados a clientes/compradores.
 """
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 from app.models import CustomerTipo
 
@@ -70,3 +70,29 @@ class CustomerNegativeBalance(BaseModel):
     tipo: str
     saldo: float
     quarto: Optional[str] = None
+
+
+class PurchaseItemResponse(BaseModel):
+    """Item de uma compra do cliente"""
+    produto_id: int
+    produto_nome: str
+    quantity: int
+    unit_price: float
+    total_price: float
+
+
+class PurchaseResponse(BaseModel):
+    """Uma compra do cliente"""
+    id: int
+    total_amount: float
+    created_at: datetime
+    is_cancelled: bool
+    items: List["PurchaseItemResponse"]
+
+
+class CustomerPurchaseHistory(BaseModel):
+    """Histórico de compras do cliente"""
+    customer_id: int
+    customer_nome: str
+    total_compras: int
+    purchases: List["PurchaseResponse"]

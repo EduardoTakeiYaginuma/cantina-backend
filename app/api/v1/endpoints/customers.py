@@ -348,6 +348,53 @@ def get_customer_sales_summary(
     }
 
 
+@router.get("/{customer_id}/purchases", response_model=schemas.CustomerPurchaseHistory)
+def get_customer_purchases(
+        customer_id: int,
+        limit: int = Query(50, description="Número máximo de registros"),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """Retorna o histórico de compras do cliente"""
+    customer_repo = CustomerRepository(db)
+    customer = customer_repo.get_by_id(customer_id)
+
+    if not customer:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+
+    sales = db.query(Sale) \
+        .filter(Sale.customer_id == customer_id) \
+        .order_by(Sale.created_at.desc()) \
+        .limit(limit) \
+        .all()
+
+    purchases = []
+    for sale in sales:
+        items = []
+        for item in sale.items:
+            items.append({
+                "produto_id": item.produto_id,
+                "produto_nome": item.produto.nome if item.produto else "Produto removido",
+                "quantity": item.quantity,
+                "unit_price": item.unit_price,
+                "total_price": item.total_price,
+            })
+        purchases.append({
+            "id": sale.id,
+            "total_amount": sale.total_amount,
+            "created_at": sale.created_at,
+            "is_cancelled": sale.is_cancelled,
+            "items": items,
+        })
+
+    return {
+        "customer_id": customer_id,
+        "customer_nome": customer.nome,
+        "total_compras": len(purchases),
+        "purchases": purchases,
+    }
+
+
 @router.get("/stats/negative-balance", response_model=List[schemas.CustomerResponse])
 def get_customers_with_negative_balance(
         db: Session = Depends(get_db),

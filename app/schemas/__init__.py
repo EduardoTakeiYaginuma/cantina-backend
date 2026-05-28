@@ -24,6 +24,9 @@ from .customer import (
     CustomerResponse,
     CustomerSalesSummary,
     CustomerNegativeBalance,
+    PurchaseItemResponse,
+    PurchaseResponse,
+    CustomerPurchaseHistory,
 )
 
 # Product
@@ -105,6 +108,9 @@ __all__ = [
     "CustomerResponse",
     "CustomerSalesSummary",
     "CustomerNegativeBalance",
+    "PurchaseItemResponse",
+    "PurchaseResponse",
+    "CustomerPurchaseHistory",
     # Product
     "ProdutoBase",
     "ProdutoCreate",
