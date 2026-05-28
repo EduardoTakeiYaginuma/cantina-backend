@@ -1,10 +1,14 @@
 # endpoints/backup.py
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi.responses import FileResponse, StreamingResponse
 from typing import List
 from dotenv import load_dotenv
+import shutil
+import tempfile
+import os
 
 from app.core.dependencies import get_current_user, require_admin
-from app.models import SystemUser  # ← ATUALIZADO
+from app.models import SystemUser
 from app import schemas
 from app.services.backup import BackupManager
 
@@ -189,3 +193,79 @@ def download_backup(
         filename=filename,
         media_type='application/octet-stream'
     )
+
+
+@router.get("/download")
+def download_database(
+        current_admin: SystemUser = Depends(require_admin)
+):
+    """
+    Faz o download direto do banco de dados atual (.db).
+    Use para salvar uma cópia local do banco fora do servidor.
+    Apenas administradores podem fazer download.
+    """
+    from datetime import datetime
+    db_path = backup_manager.db_path
+
+    if not db_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Banco de dados não encontrado: {db_path}"
+        )
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"cantina_backup_{timestamp}.db"
+
+    return FileResponse(
+        path=str(db_path),
+        filename=filename,
+        media_type="application/octet-stream"
+    )
+
+
+@router.post("/restore", response_model=schemas.BackupResponse)
+async def restore_from_upload(
+        file: UploadFile = File(...),
+        current_admin: SystemUser = Depends(require_admin)
+):
+    """
+    Restaura o banco de dados a partir de um arquivo .db enviado pelo cliente.
+    Substitui todos os dados atuais pelo conteúdo do arquivo enviado.
+    Apenas administradores podem restaurar.
+    ⚠️ ATENÇÃO: Esta operação substitui todos os dados atuais!
+    """
+    if not file.filename.endswith(".db"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Apenas arquivos .db são aceitos"
+        )
+
+    db_path = backup_manager.db_path
+    tmp_path = None
+
+    try:
+        # Salva o upload em arquivo temporário
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = tmp.name
+
+        # Garante que o diretório do banco existe
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Substitui o banco atual
+        shutil.copy2(tmp_path, str(db_path))
+
+        return schemas.BackupResponse(
+            success=True,
+            message=f"Banco de dados restaurado com sucesso a partir de '{file.filename}'",
+            restored_by=current_admin.username
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Falha ao restaurar banco: {str(e)}"
+        )
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)

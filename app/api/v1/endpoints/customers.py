@@ -84,7 +84,7 @@ def read_customers(
     elif nome:
         customers = customer_repo.search(nome)
     elif nickname:
-        customers = customer_repo.get_by_nickname(nickname)
+        customers = customer_repo.search_by_nickname(nickname)
     elif tipo:
         customers = customer_repo.get_by_tipo(tipo)
     else:

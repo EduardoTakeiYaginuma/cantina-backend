@@ -23,16 +23,15 @@ class BackupManager:
         self.backup_dir.mkdir(exist_ok=True)
 
         # Get database path from environment
-        database_url = os.getenv("DATABASE_URL", "sqlite:///./cantina.db")
+        database_url = os.getenv("DATABASE_URL", "sqlite:///./data/cantina.db")
 
         # Parse SQLite path from URL
         if database_url.startswith("sqlite:///"):
-            db_path = database_url.replace("sqlite:///", "")
-            if db_path.startswith("./"):
-                db_path = db_path[2:]
-            self.db_path = Path(os.path.dirname(os.path.dirname(__file__))) / db_path
+            db_path = database_url.replace("sqlite:///", "").lstrip("./")
+            project_root = Path(__file__).parent.parent.parent
+            self.db_path = project_root / db_path
         else:
-            self.db_path = Path("cantina.db")
+            self.db_path = Path("data/cantina.db")
 
         self.db_name = self.db_path.stem
 
@@ -163,7 +162,7 @@ class BackupManager:
             }
 
     def clear_database(self) -> Dict[str, any]:
-        """Clear all data from database tables (keep structure)"""
+        """Clear all data from database tables, preserving ADMIN system users"""
         try:
             import sqlite3
 
@@ -177,32 +176,32 @@ class BackupManager:
             conn = sqlite3.connect(str(self.db_path))
             cursor = conn.cursor()
 
-            # Get list of tables
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-            tables = [row[0] for row in cursor.fetchall()]
+            all_tables = [row[0] for row in cursor.fetchall()]
 
-            if not tables:
+            if not all_tables:
                 conn.close()
-                return {
-                    "success": True,
-                    "message": "No tables to clear"
-                }
+                return {"success": True, "message": "No tables to clear"}
 
-            # Disable foreign key checks and delete all data
             cursor.execute("PRAGMA foreign_keys = OFF")
 
-            for table in tables:
-                cursor.execute(f"DELETE FROM {table}")
+            tables_cleared = 0
+            for table in all_tables:
+                if table == "system_users":
+                    # Keep only ADMIN users
+                    cursor.execute("DELETE FROM system_users WHERE role != 'ADMIN'")
+                else:
+                    cursor.execute(f"DELETE FROM {table}")
+                tables_cleared += 1
 
             cursor.execute("PRAGMA foreign_keys = ON")
-
             conn.commit()
             conn.close()
 
             return {
                 "success": True,
-                "tables_cleared": len(tables),
-                "message": f"Database cleared successfully. {len(tables)} tables emptied."
+                "tables_cleared": tables_cleared,
+                "message": f"Banco limpo com sucesso. Dados de clientes, produtos, vendas e histórico removidos. Usuários administradores preservados."
             }
 
         except Exception as e:

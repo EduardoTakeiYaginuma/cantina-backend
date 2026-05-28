@@ -13,10 +13,16 @@ class CustomerRepository(BaseRepository[Customers]):
         super().__init__(Customers, db)
 
     def get_by_nickname(self, nickname: str) -> Optional[Customers]:
-        """Busca cliente por nickname"""
+        """Busca cliente por nickname exato"""
         return self.db.query(Customers).filter(
             Customers.nickname == nickname
         ).first()
+
+    def search_by_nickname(self, nickname: str) -> List[Customers]:
+        """Busca clientes por nickname parcial (case-insensitive)"""
+        return self.db.query(Customers).filter(
+            Customers.nickname.ilike(f"%{nickname}%")
+        ).all()
 
     def search(self, search_term: str) -> List[Customers]:
         """Busca clientes por nome ou nickname"""

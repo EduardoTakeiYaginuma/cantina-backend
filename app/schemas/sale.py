@@ -82,7 +82,7 @@ class RecentSale(BaseModel):
     total_items: int
     total_amount: float
     created_at: datetime
-    created_by_username: str
+    created_by_username: Optional[str] = None
 
     class Config:
         from_attributes = True

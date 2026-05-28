@@ -36,6 +36,7 @@ class CustomerUpdate(BaseModel):
     tipo: Optional[CustomerTipo] = None
     nome_pai: Optional[str] = Field(None, max_length=255)
     nome_mae: Optional[str] = Field(None, max_length=255)
+    is_active: Optional[bool] = None
 
 
 class CustomerResponse(CustomerBase):

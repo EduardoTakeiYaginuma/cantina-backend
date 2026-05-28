@@ -2,7 +2,7 @@
 """
 Schemas relacionados a autenticação e usuários do sistema.
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
 from typing import Optional
 
@@ -16,6 +16,11 @@ from app.models import UserRole
 class SystemUserBase(BaseModel):
     """Schema base para SystemUser"""
     username: str = Field(..., min_length=3, max_length=50)
+
+    @field_validator("username")
+    @classmethod
+    def strip_username(cls, v: str) -> str:
+        return v.strip()
 
 
 class SystemUserCreate(SystemUserBase):

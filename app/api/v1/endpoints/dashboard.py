@@ -62,6 +62,7 @@ def get_dashboard_stats(
     today = date.today()
 
     total_sales_today = db.query(func.sum(Sale.total_amount)).filter(
+        func.date(Sale.created_at) == today
     ).scalar() or 0
 
     total_sales_count_today = db.query(func.count(Sale.id)).filter(

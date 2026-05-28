@@ -85,7 +85,7 @@ class ProductAuditLog(Base):
 
     __table_args__ = (
         Index('idx_produto_date', 'produto_id', 'created_at'),
-        Index('idx_action_date', 'action', 'created_at'),
+        Index('idx_product_action_date', 'action', 'created_at'),
     )
 
 
@@ -116,7 +116,7 @@ class SystemUserAuditLog(Base):
 
     __table_args__ = (
         Index('idx_user_date', 'user_id', 'created_at'),
-        Index('idx_action_date', 'action', 'created_at'),
+        Index('idx_sysuser_action_date', 'action', 'created_at'),
     )
 
 

@@ -8,6 +8,31 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
 
+def _traduzir_mensagem(err: dict) -> str:
+    tipo = err.get("type", "")
+    ctx = err.get("ctx", {})
+    traducoes = {
+        "missing": "Campo obrigatório",
+        "greater_than": f"Deve ser maior que {ctx.get('gt', '')}",
+        "greater_than_equal": f"Deve ser maior ou igual a {ctx.get('ge', '')}",
+        "less_than": f"Deve ser menor que {ctx.get('lt', '')}",
+        "less_than_equal": f"Deve ser menor ou igual a {ctx.get('le', '')}",
+        "string_type": "Deve ser um texto",
+        "string_too_short": f"Mínimo de {ctx.get('min_length', '')} caracteres",
+        "string_too_long": f"Máximo de {ctx.get('max_length', '')} caracteres",
+        "int_type": "Deve ser um número inteiro",
+        "int_parsing": "Valor inválido para número inteiro",
+        "float_type": "Deve ser um número decimal",
+        "float_parsing": "Valor inválido para número decimal",
+        "bool_type": "Deve ser verdadeiro ou falso",
+        "enum": f"Valor inválido. Opções: {ctx.get('expected', '')}",
+        "value_error": err.get("msg", "Valor inválido"),
+        "json_invalid": "JSON inválido",
+        "extra_forbidden": "Campo não permitido",
+    }
+    return traducoes.get(tipo, err.get("msg", "Valor inválido"))
+
+
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     """
     Handler para erros de validação do Pydantic.
@@ -26,7 +51,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         field = loc[-1] if loc else "body"
         errors.append({
             "field": field,
-            "message": err.get("msg"),
+            "message": _traduzir_mensagem(err),
             "type": err.get("type"),
             "input": err.get("input")
         })
