@@ -40,6 +40,7 @@ def create_customer(
         tipo=customer.tipo or CustomerTipo.ACAMPANTE,
         nome_pai=customer.nome_pai,
         nome_mae=customer.nome_mae,
+        informacoes_contato=customer.informacoes_contato,
         created_by_id=current_user.id  # ← Registra quem criou
     )
 
@@ -56,7 +57,8 @@ def create_customer(
             "nickname": created_customer.nickname,
             "tipo": created_customer.tipo.value,
             "saldo": created_customer.saldo,
-            "quarto": created_customer.quarto
+            "quarto": created_customer.quarto,
+            "informacoes_contato": created_customer.informacoes_contato
         },
         description=f"Cliente criado por {current_user.username}"
     )

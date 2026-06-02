@@ -82,6 +82,7 @@ class Customers(Base):
     tipo = Column(Enum(CustomerTipo), default=CustomerTipo.ACAMPANTE, nullable=False)
     nome_pai = Column(String(255))
     nome_mae = Column(String(255))
+    informacoes_contato = Column(String(500))
     is_active = Column(Boolean, default=True)
 
     # Campos de auditoria

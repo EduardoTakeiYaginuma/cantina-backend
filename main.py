@@ -1,6 +1,7 @@
 # main.py
 import os
 from contextlib import asynccontextmanager
+import sqlalchemy
 
 from app import models
 from app.models import UserRole
@@ -18,6 +19,31 @@ load_dotenv()
 
 
 # ============================================
+# Migrações de Schema
+# ============================================
+
+def _run_migrations(db_engine):
+    """Aplica colunas novas em bancos já existentes (ALTER TABLE idempotente)."""
+    migrations = [
+        ("customers", "informacoes_contato", "VARCHAR(500)"),
+    ]
+    with db_engine.connect() as conn:
+        for table, column, col_type in migrations:
+            result = conn.execute(
+                sqlalchemy.text(f"PRAGMA table_info({table})")
+            )
+            existing_columns = [row[1] for row in result]
+            if column not in existing_columns:
+                conn.execute(
+                    sqlalchemy.text(
+                        f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"
+                    )
+                )
+                conn.commit()
+                print(f"✅ Migration: coluna '{column}' adicionada em '{table}'")
+
+
+# ============================================
 # Lifespan Event Handler (Startup/Shutdown)
 # ============================================
 
@@ -32,6 +58,9 @@ async def lifespan(app: FastAPI):
     # Criar tabelas
     models.Base.metadata.create_all(bind=engine)
     print("✅ Database tables created/verified")
+
+    # Migrações manuais para colunas adicionadas após criação inicial do banco
+    _run_migrations(engine)
 
     # Criar usuário admin padrão
     db = next(get_db())

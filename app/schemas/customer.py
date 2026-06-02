@@ -20,6 +20,7 @@ class CustomerBase(BaseModel):
     quarto: Optional[str] = Field(None, max_length=100)
     nome_pai: Optional[str] = Field(None, max_length=255)
     nome_mae: Optional[str] = Field(None, max_length=255)
+    informacoes_contato: Optional[str] = Field(None, max_length=500)
 
 
 class CustomerCreate(CustomerBase):
@@ -36,6 +37,7 @@ class CustomerUpdate(BaseModel):
     tipo: Optional[CustomerTipo] = None
     nome_pai: Optional[str] = Field(None, max_length=255)
     nome_mae: Optional[str] = Field(None, max_length=255)
+    informacoes_contato: Optional[str] = Field(None, max_length=500)
     is_active: Optional[bool] = None
 
 
