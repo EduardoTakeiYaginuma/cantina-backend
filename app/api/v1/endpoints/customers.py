@@ -1,7 +1,7 @@
 # endpoints/customers.py
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from typing import List, Optional
 
 from database import get_db
@@ -75,6 +75,7 @@ def read_customers(
         nickname: Optional[str] = Query(None, description="Buscar por ou nickname"),
         tipo: Optional[CustomerTipo] = Query(None, description="Filtrar por tipo"),
         customer_id: Optional[int] = Query(None, description="Buscar por ID"),
+        is_active: Optional[bool] = Query(None, description="Filtrar por status ativo/inativo"),
         db: Session = Depends(get_db)
 ):
     """Lista todos os clientes com filtros opcionais"""
@@ -82,16 +83,26 @@ def read_customers(
 
     if customer_id is not None:
         customer = customer_repo.get_by_id(customer_id)
-        return [customer] if customer else []
-    elif nome:
-        customers = customer_repo.search(nome)
-    elif nickname:
-        customers = customer_repo.search_by_nickname(nickname)
-    elif tipo:
-        customers = customer_repo.get_by_tipo(tipo)
-    else:
-        customers = customer_repo.get_all(skip=skip, limit=limit)
+        if customer is None:
+            return []
+        if is_active is not None and customer.is_active != is_active:
+            return []
+        return [customer]
 
+    query = db.query(Customers)
+
+    if is_active is not None:
+        query = query.filter(Customers.is_active == is_active)
+    if nome:
+        query = query.filter(
+            or_(Customers.nome.ilike(f"%{nome}%"), Customers.nickname.ilike(f"%{nome}%"))
+        )
+    if nickname:
+        query = query.filter(Customers.nickname.ilike(f"%{nickname}%"))
+    if tipo:
+        query = query.filter(Customers.tipo == tipo)
+
+    customers = query.offset(skip).limit(limit).all()
     return customers
 
 
