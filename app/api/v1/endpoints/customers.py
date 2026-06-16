@@ -1,13 +1,23 @@
 # endpoints/customers.py
-from fastapi import APIRouter, Depends, HTTPException, Query
+import io
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from typing import List, Optional
 
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment
+
 from database import get_db
 from app.core.dependencies import get_current_user, get_current_active_admin
 from app.repositories import CustomerRepository
-from app.models import SystemUser, Customers, CustomerTipo, BalanceTransaction, Sale
+from app.models import (
+    SystemUser, Customers, CustomerTipo, BalanceTransaction, Sale,
+    CustomerImportBatch, CustomerImportBatchItem
+)
 from app import schemas
 from app.services.audit import AuditService, get_changed_fields
 from app.models_audit import AuditAction
@@ -405,6 +415,349 @@ def get_customer_purchases(
         "customer_nome": customer.nome,
         "total_compras": len(purchases),
         "purchases": purchases,
+    }
+
+
+# ============================================
+# Ativação de Cliente
+# ============================================
+
+@router.patch("/{customer_id}/activate", response_model=schemas.CustomerResponse)
+def activate_customer(
+        customer_id: int,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """Reativa um cliente desativado"""
+    customer_repo = CustomerRepository(db)
+    customer = customer_repo.get_by_id(customer_id)
+
+    if customer is None:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+
+    if customer.is_active:
+        raise HTTPException(status_code=400, detail="Cliente já está ativo")
+
+    customer.is_active = True
+    customer.updated_by_id = current_user.id
+    customer.updated_at = datetime.now(timezone.utc)
+    updated = customer_repo.update(customer)
+
+    audit = AuditService(db)
+    audit.log_customer_action(
+        customer_id=customer_id,
+        action=AuditAction.UPDATE,
+        created_by_id=current_user.id,
+        old_values={"is_active": False},
+        new_values={"is_active": True},
+        description=f"Cliente reativado por {current_user.username}"
+    )
+
+    return updated
+
+
+# ============================================
+# Importação via Excel - Clientes
+# ============================================
+
+@router.get("/template/download")
+def download_customer_template(
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """Gera e retorna o template Excel para importação de clientes"""
+    wb = openpyxl.Workbook()
+
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True)
+    headers = ["nome", "nickname", "quarto", "nome_pai", "nome_mae", "informacoes_contato", "saldo"]
+
+    for sheet_title, tipo_label in [("ACAMPANTES", "acampante"), ("EQUIPE", "equipe")]:
+        ws = wb.create_sheet(title=sheet_title)
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center")
+
+        if tipo_label == "acampante":
+            ws.append(["João Silva", "joao", "101", "Carlos Silva", "Ana Silva", "", 50.0])
+        else:
+            ws.append(["Maria Santos", "maria", "", "", "", "Coordenadora", 0.0])
+
+        for col_letter, width in zip("ABCDEFG", [30, 20, 10, 25, 25, 30, 10]):
+            ws.column_dimensions[col_letter].width = width
+
+    # Remover sheet padrão vazio
+    if "Sheet" in wb.sheetnames:
+        del wb["Sheet"]
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="template_importacao_clientes.xlsx"'}
+    )
+
+
+@router.post("/import")
+def import_customers_from_excel(
+        file: UploadFile = File(...),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """Importa clientes em massa a partir de um arquivo Excel com abas ACAMPANTES e EQUIPE"""
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Arquivo deve ser .xlsx ou .xls")
+
+    contents = file.file.read()
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Arquivo Excel inválido ou corrompido")
+
+    customer_repo = CustomerRepository(db)
+    audit = AuditService(db)
+
+    imported_count = 0
+    skipped_count = 0
+    error_count = 0
+    imported_ids = []
+    errors = []
+
+    # Mapeia nome de aba para tipo de cliente
+    sheet_tipo_map = {
+        "ACAMPANTES": CustomerTipo.ACAMPANTE,
+        "EQUIPE": CustomerTipo.EQUIPE,
+    }
+
+    # Se o arquivo tem abas nomeadas usa elas, senão usa a primeira como ACAMPANTES
+    sheets_to_process = []
+    for sheet_name, tipo in sheet_tipo_map.items():
+        if sheet_name in wb.sheetnames:
+            sheets_to_process.append((wb[sheet_name], tipo))
+
+    if not sheets_to_process:
+        # Arquivo sem abas padrão: trata a primeira aba como ACAMPANTES
+        sheets_to_process = [(wb.active, CustomerTipo.ACAMPANTE)]
+
+    for ws, tipo in sheets_to_process:
+        rows = list(ws.iter_rows(min_row=2, values_only=True))
+
+        for row_num, row in enumerate(rows, start=2):
+            if not any(row):
+                continue
+
+            nome = str(row[0]).strip() if row[0] is not None else ""
+            nickname = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ""
+
+            if not nome or not nickname:
+                skipped_count += 1
+                continue
+
+            if customer_repo.nickname_exists(nickname):
+                skipped_count += 1
+                continue
+
+            try:
+                quarto = str(row[2]).strip() if len(row) > 2 and row[2] is not None else None
+                nome_pai = str(row[3]).strip() if len(row) > 3 and row[3] is not None else None
+                nome_mae = str(row[4]).strip() if len(row) > 4 and row[4] is not None else None
+                informacoes_contato = str(row[5]).strip() if len(row) > 5 and row[5] is not None else None
+                saldo = float(row[6]) if len(row) > 6 and row[6] is not None else 0.0
+            except (ValueError, TypeError) as e:
+                errors.append(f"Linha {row_num}: dados inválidos para '{nome}' - {e}")
+                error_count += 1
+                continue
+
+            db_customer = Customers(
+                nome=nome,
+                nickname=nickname,
+                quarto=quarto or None,
+                saldo=saldo,
+                tipo=tipo,
+                nome_pai=nome_pai or None,
+                nome_mae=nome_mae or None,
+                informacoes_contato=informacoes_contato or None,
+                created_by_id=current_user.id
+            )
+            db.add(db_customer)
+            db.flush()
+            imported_ids.append(db_customer.id)
+
+            audit.log_customer_action(
+                customer_id=db_customer.id,
+                action=AuditAction.CREATE,
+                created_by_id=current_user.id,
+                new_values={"nome": nome, "nickname": nickname, "tipo": tipo.value, "saldo": saldo},
+                description=f"Cliente importado via Excel por {current_user.username}"
+            )
+            imported_count += 1
+
+    # Criar batch de importação
+    batch = CustomerImportBatch(
+        filename=file.filename,
+        imported_count=imported_count,
+        skipped_count=skipped_count,
+        error_count=error_count,
+        status="completed",
+        created_by_id=current_user.id
+    )
+    db.add(batch)
+    db.flush()
+
+    for customer_id in imported_ids:
+        db.add(CustomerImportBatchItem(batch_id=batch.id, customer_id=customer_id))
+
+    db.commit()
+
+    return {
+        "batch_id": batch.id,
+        "filename": file.filename,
+        "statistics": {
+            "imported": imported_count,
+            "skipped": skipped_count,
+            "errors": error_count,
+        },
+        "errors": errors,
+        "message": f"{imported_count} cliente(s) importado(s) com sucesso"
+    }
+
+
+@router.get("/import/batches")
+def list_customer_import_batches(
+        skip: int = 0,
+        limit: int = 50,
+        include_rolled_back: bool = True,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """Lista todos os batches de importação de clientes"""
+    query = db.query(CustomerImportBatch)
+
+    if not include_rolled_back:
+        query = query.filter(CustomerImportBatch.status == "completed")
+
+    batches = query.order_by(CustomerImportBatch.created_at.desc()).offset(skip).limit(limit).all()
+
+    result = []
+    for batch in batches:
+        customer_ids = [item.customer_id for item in batch.items]
+        has_activity = False
+        if customer_ids:
+            has_sales = db.query(Sale).filter(Sale.customer_id.in_(customer_ids)).first()
+            has_transactions = db.query(BalanceTransaction).filter(
+                BalanceTransaction.customer_id.in_(customer_ids)
+            ).first()
+            has_activity = bool(has_sales or has_transactions)
+
+        result.append({
+            "id": batch.id,
+            "filename": batch.filename,
+            "imported_count": batch.imported_count,
+            "skipped_count": batch.skipped_count,
+            "error_count": batch.error_count,
+            "status": batch.status,
+            "created_at": batch.created_at,
+            "created_by": batch.created_by.username,
+            "rolled_back_at": batch.rolled_back_at,
+            "rolled_back_by": batch.rolled_back_by.username if batch.rolled_back_by else None,
+            "can_rollback": batch.status == "completed" and not has_activity,
+        })
+
+    return {"batches": result, "total": len(result)}
+
+
+@router.get("/import/batches/{batch_id}")
+def get_customer_import_batch_details(
+        batch_id: int,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """Retorna detalhes de um batch de importação de clientes"""
+    batch = db.query(CustomerImportBatch).filter(CustomerImportBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch não encontrado")
+
+    customers = []
+    for item in batch.items:
+        c = item.customer
+        if c:
+            customers.append({
+                "id": c.id,
+                "nome": c.nome,
+                "nickname": c.nickname,
+                "tipo": c.tipo.value,
+                "quarto": c.quarto,
+                "saldo": c.saldo,
+                "is_active": c.is_active,
+            })
+
+    return {
+        "id": batch.id,
+        "filename": batch.filename,
+        "imported_count": batch.imported_count,
+        "skipped_count": batch.skipped_count,
+        "error_count": batch.error_count,
+        "status": batch.status,
+        "created_at": batch.created_at,
+        "created_by": batch.created_by.username,
+        "rolled_back_at": batch.rolled_back_at,
+        "rolled_back_by": batch.rolled_back_by.username if batch.rolled_back_by else None,
+        "customers": customers,
+    }
+
+
+@router.delete("/import/batches/{batch_id}")
+def rollback_customer_import_batch(
+        batch_id: int,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """Reverte um batch de importação deletando os clientes importados"""
+    batch = db.query(CustomerImportBatch).filter(CustomerImportBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch não encontrado")
+
+    if batch.status == "rolled_back":
+        raise HTTPException(status_code=400, detail="Batch já foi revertido")
+
+    customer_ids = [item.customer_id for item in batch.items]
+
+    if customer_ids:
+        has_sales = db.query(Sale).filter(Sale.customer_id.in_(customer_ids)).first()
+        has_transactions = db.query(BalanceTransaction).filter(
+            BalanceTransaction.customer_id.in_(customer_ids)
+        ).first()
+        if has_sales or has_transactions:
+            raise HTTPException(
+                status_code=400,
+                detail="Não é possível reverter: alguns clientes já possuem vendas ou transações"
+            )
+
+    deleted_count = 0
+    for customer_id in customer_ids:
+        customer = db.query(Customers).filter(Customers.id == customer_id).first()
+        if customer:
+            db.delete(customer)
+            deleted_count += 1
+
+    db.query(CustomerImportBatchItem).filter(
+        CustomerImportBatchItem.batch_id == batch_id
+    ).delete()
+
+    batch.status = "rolled_back"
+    batch.rolled_back_at = datetime.now(timezone.utc)
+    batch.rolled_back_by_id = current_user.id
+
+    db.commit()
+
+    return {
+        "message": f"Rollback concluído. {deleted_count} cliente(s) removido(s).",
+        "deleted_count": deleted_count,
+        "batch_id": batch_id,
     }
 
 

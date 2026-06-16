@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import sqlalchemy
 
 from app import models
-from app.models import UserRole
+from app.models import UserRole, ProductImportBatch, ProductImportBatchItem, CustomerImportBatch, CustomerImportBatchItem
 from database import engine, get_db
 from dotenv import load_dotenv
 from fastapi import FastAPI

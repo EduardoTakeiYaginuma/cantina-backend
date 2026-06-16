@@ -1,13 +1,20 @@
 # endpoints/produtos.py
-from fastapi import APIRouter, Depends, HTTPException, Query
+import io
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
 
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment
+
 from database import get_db
 from app.core.dependencies import get_current_user, get_current_active_admin
-from app.repositories import ProdutoRepository  # ← NOVO
-from app.models import SystemUser, Produto, SaleItem, Restock  # ← ATUALIZADO
+from app.repositories import ProdutoRepository
+from app.models import SystemUser, Produto, SaleItem, Restock, ProductImportBatch, ProductImportBatchItem
 from app import schemas
 from app.services.audit import AuditService, get_changed_fields
 from app.models_audit import AuditAction
@@ -379,6 +386,388 @@ def get_produtos_summary(
         "produtos_inativos": total_produtos - produtos_ativos,
         "produtos_estoque_baixo": produtos_estoque_baixo,
         "valor_total_estoque": float(valor_total_estoque or 0)
+    }
+
+
+# ============================================
+# Importação via Excel - Produtos
+# ============================================
+
+@router.get("/template/download")
+def download_product_template(
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """Gera e retorna o template Excel para importação de produtos"""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Produtos"
+
+    headers = ["nome", "valor", "estoque", "estoque_minimo"]
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True)
+
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+
+    # Exemplo de linha
+    ws.append(["Coca-Cola", 5.00, 100, 10])
+
+    ws.column_dimensions["A"].width = 30
+    ws.column_dimensions["B"].width = 12
+    ws.column_dimensions["C"].width = 12
+    ws.column_dimensions["D"].width = 18
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="template_produtos.xlsx"'}
+    )
+
+
+@router.get("/restock/template/download")
+def download_restock_template(
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """Gera e retorna o template Excel para importação de reabastecimento em massa"""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Reabastecimento"
+
+    headers = ["nome_produto", "quantidade"]
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True)
+
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+
+    ws.append(["Coca-Cola", 50])
+
+    ws.column_dimensions["A"].width = 30
+    ws.column_dimensions["B"].width = 15
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="template_reabastecimento_produtos.xlsx"'}
+    )
+
+
+@router.post("/import")
+def import_products_from_excel(
+        file: UploadFile = File(...),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """Importa produtos em massa a partir de um arquivo Excel"""
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Arquivo deve ser .xlsx ou .xls")
+
+    contents = file.file.read()
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Arquivo Excel inválido ou corrompido")
+
+    ws = wb.active
+    rows = list(ws.iter_rows(min_row=2, values_only=True))
+
+    produto_repo = ProdutoRepository(db)
+    audit = AuditService(db)
+
+    imported_count = 0
+    skipped_count = 0
+    error_count = 0
+    imported_ids = []
+    errors = []
+
+    for row_num, row in enumerate(rows, start=2):
+        if not any(row):
+            continue
+
+        nome = str(row[0]).strip() if row[0] is not None else ""
+        if not nome:
+            skipped_count += 1
+            continue
+
+        try:
+            valor = float(row[1]) if row[1] is not None else None
+            if valor is None or valor <= 0:
+                errors.append(f"Linha {row_num}: valor inválido para '{nome}'")
+                error_count += 1
+                continue
+
+            estoque = int(row[2]) if row[2] is not None else 0
+            estoque_minimo = int(row[3]) if row[3] is not None else 10
+        except (ValueError, TypeError):
+            errors.append(f"Linha {row_num}: dados inválidos para '{nome}'")
+            error_count += 1
+            continue
+
+        if produto_repo.nome_exists(nome):
+            skipped_count += 1
+            continue
+
+        db_produto = Produto(
+            nome=nome,
+            valor=valor,
+            estoque=max(0, estoque),
+            estoque_minimo=max(0, estoque_minimo),
+            created_by_id=current_user.id
+        )
+        created = produto_repo.create(db_produto)
+        imported_ids.append(created.id)
+
+        audit.log_product_action(
+            produto_id=created.id,
+            action=AuditAction.CREATE,
+            created_by_id=current_user.id,
+            new_values={"nome": created.nome, "valor": created.valor, "estoque": created.estoque},
+            description=f"Produto importado via Excel por {current_user.username}"
+        )
+        imported_count += 1
+
+    # Criar batch de importação
+    batch = ProductImportBatch(
+        filename=file.filename,
+        imported_count=imported_count,
+        skipped_count=skipped_count,
+        error_count=error_count,
+        status="completed",
+        created_by_id=current_user.id
+    )
+    db.add(batch)
+    db.flush()
+
+    for produto_id in imported_ids:
+        db.add(ProductImportBatchItem(batch_id=batch.id, produto_id=produto_id))
+
+    db.commit()
+
+    return {
+        "batch_id": batch.id,
+        "filename": file.filename,
+        "statistics": {
+            "imported": imported_count,
+            "skipped": skipped_count,
+            "errors": error_count,
+        },
+        "errors": errors,
+        "message": f"{imported_count} produto(s) importado(s) com sucesso"
+    }
+
+
+@router.post("/restock/import")
+def import_restock_from_excel(
+        file: UploadFile = File(...),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """Importa reabastecimento em massa a partir de um arquivo Excel"""
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Arquivo deve ser .xlsx ou .xls")
+
+    contents = file.file.read()
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Arquivo Excel inválido ou corrompido")
+
+    ws = wb.active
+    rows = list(ws.iter_rows(min_row=2, values_only=True))
+
+    produto_repo = ProdutoRepository(db)
+
+    processed = 0
+    skipped = 0
+    errors = []
+
+    for row_num, row in enumerate(rows, start=2):
+        if not any(row):
+            continue
+
+        nome_produto = str(row[0]).strip() if row[0] is not None else ""
+        if not nome_produto:
+            skipped += 1
+            continue
+
+        try:
+            quantidade = int(row[1]) if row[1] is not None else 0
+            if quantidade <= 0:
+                errors.append(f"Linha {row_num}: quantidade inválida para '{nome_produto}'")
+                skipped += 1
+                continue
+        except (ValueError, TypeError):
+            errors.append(f"Linha {row_num}: quantidade inválida para '{nome_produto}'")
+            skipped += 1
+            continue
+
+        produto = db.query(Produto).filter(
+            Produto.nome.ilike(nome_produto),
+            Produto.is_active == True
+        ).first()
+
+        if not produto:
+            errors.append(f"Linha {row_num}: produto '{nome_produto}' não encontrado")
+            skipped += 1
+            continue
+
+        produto_repo.add_stock(produto.id, quantidade)
+
+        restock = Restock(
+            produto_id=produto.id,
+            created_by_id=current_user.id,
+            quantity=quantidade
+        )
+        db.add(restock)
+        processed += 1
+
+    db.commit()
+
+    return {
+        "statistics": {"processed": processed, "skipped": skipped},
+        "errors": errors,
+        "message": f"{processed} produto(s) reabastecido(s) com sucesso"
+    }
+
+
+@router.get("/import/batches")
+def list_import_batches(
+        skip: int = 0,
+        limit: int = 50,
+        include_rolled_back: bool = True,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """Lista todos os batches de importação de produtos"""
+    query = db.query(ProductImportBatch)
+
+    if not include_rolled_back:
+        query = query.filter(ProductImportBatch.status == "completed")
+
+    batches = query.order_by(ProductImportBatch.created_at.desc()).offset(skip).limit(limit).all()
+
+    result = []
+    for batch in batches:
+        # can_rollback: apenas se nenhum produto do batch foi vendido
+        produto_ids = [item.produto_id for item in batch.items]
+        has_sales = False
+        if produto_ids:
+            has_sales = db.query(SaleItem).filter(SaleItem.produto_id.in_(produto_ids)).first() is not None
+
+        result.append({
+            "id": batch.id,
+            "filename": batch.filename,
+            "imported_count": batch.imported_count,
+            "skipped_count": batch.skipped_count,
+            "error_count": batch.error_count,
+            "status": batch.status,
+            "created_at": batch.created_at,
+            "created_by": batch.created_by.username,
+            "rolled_back_at": batch.rolled_back_at,
+            "rolled_back_by": batch.rolled_back_by.username if batch.rolled_back_by else None,
+            "can_rollback": batch.status == "completed" and not has_sales,
+        })
+
+    return {"batches": result, "total": len(result)}
+
+
+@router.get("/import/batches/{batch_id}")
+def get_import_batch_details(
+        batch_id: int,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """Retorna detalhes de um batch de importação incluindo produtos"""
+    batch = db.query(ProductImportBatch).filter(ProductImportBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch não encontrado")
+
+    products = []
+    for item in batch.items:
+        p = item.produto
+        if p:
+            products.append({
+                "id": p.id,
+                "nome": p.nome,
+                "valor": p.valor,
+                "estoque": p.estoque,
+                "is_active": p.is_active,
+            })
+
+    return {
+        "id": batch.id,
+        "filename": batch.filename,
+        "imported_count": batch.imported_count,
+        "skipped_count": batch.skipped_count,
+        "error_count": batch.error_count,
+        "status": batch.status,
+        "created_at": batch.created_at,
+        "created_by": batch.created_by.username,
+        "rolled_back_at": batch.rolled_back_at,
+        "rolled_back_by": batch.rolled_back_by.username if batch.rolled_back_by else None,
+        "products": products,
+    }
+
+
+@router.delete("/import/batches/{batch_id}")
+def rollback_import_batch(
+        batch_id: int,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)
+):
+    """Reverte um batch de importação deletando os produtos importados"""
+    batch = db.query(ProductImportBatch).filter(ProductImportBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch não encontrado")
+
+    if batch.status == "rolled_back":
+        raise HTTPException(status_code=400, detail="Batch já foi revertido")
+
+    produto_ids = [item.produto_id for item in batch.items]
+
+    has_sales = False
+    if produto_ids:
+        has_sales = db.query(SaleItem).filter(SaleItem.produto_id.in_(produto_ids)).first() is not None
+
+    if has_sales:
+        raise HTTPException(
+            status_code=400,
+            detail="Não é possível reverter: alguns produtos já foram vendidos"
+        )
+
+    deleted_count = 0
+    for produto_id in produto_ids:
+        produto = db.query(Produto).filter(Produto.id == produto_id).first()
+        if produto:
+            db.delete(produto)
+            deleted_count += 1
+
+    db.query(ProductImportBatchItem).filter(ProductImportBatchItem.batch_id == batch_id).delete()
+
+    batch.status = "rolled_back"
+    batch.rolled_back_at = datetime.now(timezone.utc)
+    batch.rolled_back_by_id = current_user.id
+
+    db.commit()
+
+    return {
+        "message": f"Rollback concluído. {deleted_count} produto(s) removido(s).",
+        "deleted_count": deleted_count,
+        "batch_id": batch_id,
     }
 
 

@@ -72,6 +72,50 @@ class SaleResponse(BaseModel):
         from_attributes = True
 
 
+class GuestSaleItemCreate(BaseModel):
+    produto_id: int
+    quantity: int = Field(..., gt=0)
+
+
+class GuestSaleCreate(BaseModel):
+    guest_name: Optional[str] = None
+    items: List[GuestSaleItemCreate] = Field(...)
+
+
+class GuestSaleCancellation(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
+class GuestSaleItemResponse(BaseModel):
+    id: int
+    sale_id: int
+    produto_id: int
+    produto_nome: Optional[str] = None
+    quantity: int
+    unit_price: float
+    total_price: float
+
+    class Config:
+        from_attributes = True
+
+
+class GuestSaleResponse(BaseModel):
+    id: int
+    guest_name: Optional[str] = None
+    created_by_id: int
+    created_by_username: Optional[str] = None
+    total_amount: float
+    created_at: datetime
+    is_cancelled: bool = False
+    cancelled_at: Optional[datetime] = None
+    cancelled_by_id: Optional[int] = None
+    cancellation_reason: Optional[str] = None
+    items: List[GuestSaleItemResponse]
+
+    class Config:
+        from_attributes = True
+
+
 class RecentSale(BaseModel):
     """Schema para vendas recentes (dashboard)"""
     id: int

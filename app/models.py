@@ -217,3 +217,108 @@ class BalanceTransaction(Base):
     # Relationships
     customer = relationship("Customers", back_populates="balance_transactions")
     created_by = relationship("SystemUser", back_populates="balance_transactions_created")
+
+
+# ============================================
+# TABELA 8: Vendas Avulsas (sem cliente)
+# ============================================
+
+class GuestSale(Base):
+    __tablename__ = "guest_sales"
+
+    id = Column(Integer, primary_key=True, index=True)
+    guest_name = Column(String(255), nullable=True)
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
+    total_amount = Column(Float, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    is_cancelled = Column(Boolean, default=False, nullable=False, index=True)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancelled_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+    cancellation_reason = Column(Text, nullable=True)
+
+    created_by = relationship("SystemUser", foreign_keys=[created_by_id])
+    cancelled_by = relationship("SystemUser", foreign_keys=[cancelled_by_id])
+    items = relationship("GuestSaleItem", back_populates="sale", cascade="all, delete-orphan")
+
+
+class GuestSaleItem(Base):
+    __tablename__ = "guest_sale_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sale_id = Column(Integer, ForeignKey("guest_sales.id"), nullable=False)
+    produto_id = Column(Integer, ForeignKey("produtos.id"), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    unit_price = Column(Float, nullable=False)
+    total_price = Column(Float, nullable=False)
+
+    sale = relationship("GuestSale", back_populates="items")
+    produto = relationship("Produto")
+
+
+# ============================================
+# TABELA 9: Batches de Importação de Produtos
+# ============================================
+
+class ProductImportBatch(Base):
+    __tablename__ = "product_import_batches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    filename = Column(String(255), nullable=False)
+    imported_count = Column(Integer, default=0)
+    skipped_count = Column(Integer, default=0)
+    error_count = Column(Integer, default=0)
+    status = Column(String(50), default="completed")  # completed | rolled_back
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
+    rolled_back_at = Column(DateTime, nullable=True)
+    rolled_back_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+
+    created_by = relationship("SystemUser", foreign_keys=[created_by_id])
+    rolled_back_by = relationship("SystemUser", foreign_keys=[rolled_back_by_id])
+    items = relationship("ProductImportBatchItem", back_populates="batch")
+
+
+class ProductImportBatchItem(Base):
+    __tablename__ = "product_import_batch_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    batch_id = Column(Integer, ForeignKey("product_import_batches.id"), nullable=False)
+    produto_id = Column(Integer, ForeignKey("produtos.id"), nullable=False)
+
+    batch = relationship("ProductImportBatch", back_populates="items")
+    produto = relationship("Produto")
+
+
+# ============================================
+# TABELA 10: Batches de Importação de Clientes
+# ============================================
+
+class CustomerImportBatch(Base):
+    __tablename__ = "customer_import_batches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    filename = Column(String(255), nullable=False)
+    imported_count = Column(Integer, default=0)
+    skipped_count = Column(Integer, default=0)
+    error_count = Column(Integer, default=0)
+    status = Column(String(50), default="completed")  # completed | rolled_back
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
+    rolled_back_at = Column(DateTime, nullable=True)
+    rolled_back_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+
+    created_by = relationship("SystemUser", foreign_keys=[created_by_id])
+    rolled_back_by = relationship("SystemUser", foreign_keys=[rolled_back_by_id])
+    items = relationship("CustomerImportBatchItem", back_populates="batch")
+
+
+class CustomerImportBatchItem(Base):
+    __tablename__ = "customer_import_batch_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    batch_id = Column(Integer, ForeignKey("customer_import_batches.id"), nullable=False)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
+
+    batch = relationship("CustomerImportBatch", back_populates="items")
+    customer = relationship("Customers")
