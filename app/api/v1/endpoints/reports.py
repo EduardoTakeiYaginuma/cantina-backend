@@ -2,7 +2,7 @@
 """
 Endpoints para exportação de relatórios de vendas em Excel e PDF.
 """
-from datetime import datetime
+from datetime import datetime, date
 from io import BytesIO
 from typing import Optional
 
