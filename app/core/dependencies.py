@@ -3,15 +3,16 @@
 Dependencies do FastAPI para autenticação e autorização.
 Usa injeção de dependências (Depends).
 """
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from database import get_db
-from app.models import SystemUser, UserRole
+from app.models import SystemUser, UserRole, UserSession
 from app.repositories import SystemUserRepository
-from .security import verify_password, verify_token
+from .security import verify_password, verify_token, IDLE_TIMEOUT_MINUTES
 
 # OAuth2 scheme
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
@@ -73,9 +74,26 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    username = verify_token(token)
-    if not username:
+    payload = verify_token(token)
+    username = payload["sub"]
+
+    # Timeout de ociosidade: sessão expira se a última request foi há mais de IDLE_TIMEOUT_MINUTES
+    session = db.query(UserSession).filter(UserSession.id == payload["jti"]).first()
+    if session is None:
         raise credentials_exception
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if now - session.last_activity_at > timedelta(minutes=IDLE_TIMEOUT_MINUTES):
+        db.delete(session)
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired due to inactivity",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    session.last_activity_at = now
+    db.commit()
 
     user = get_user(db, username=username)
     if user is None:

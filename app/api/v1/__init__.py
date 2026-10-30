@@ -13,6 +13,7 @@ from .endpoints import (
     audit_router,
     guest_sales_router,
     reports_router,
+    analytics_router,
 )
 
 # Router principal da v1
@@ -28,4 +29,5 @@ api_router.include_router(backup_router, tags=["backup"])
 api_router.include_router(audit_router, tags=["audit"])
 api_router.include_router(guest_sales_router, tags=["guest-sales"])
 api_router.include_router(reports_router, tags=["reports"])
+api_router.include_router(analytics_router, tags=["analytics"])
 __all__ = ["api_router"]

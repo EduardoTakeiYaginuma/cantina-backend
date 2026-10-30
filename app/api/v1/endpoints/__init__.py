@@ -12,6 +12,7 @@ from .backup import router as backup_router
 from .audit import router as audit_router
 from .guest_sales import router as guest_sales_router
 from .reports import router as reports_router
+from .analytics import router as analytics_router
 
 __all__ = [
     "auth_router",
@@ -23,4 +24,5 @@ __all__ = [
     "audit_router",
     "guest_sales_router",
     "reports_router",
+    "analytics_router",
 ]

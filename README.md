@@ -112,7 +112,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 DATABASE_URL=sqlite:///./cantina.db
 SECRET_KEY=sua_chave_secreta_muito_longa_e_segura
 ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=30
+IDLE_TIMEOUT_MINUTES=10
 ```
 
 ### Banco de Dados

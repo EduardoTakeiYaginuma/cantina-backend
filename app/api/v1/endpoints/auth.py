@@ -1,5 +1,5 @@
 # app/api/v1/endpoints/auth.py
-from datetime import timedelta
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import OAuth2PasswordRequestForm
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app import schemas
 from app.core import *
 from app.core.dependencies import get_db, get_current_active_admin, get_current_user
-from app.models import SystemUser, UserRole
+from app.models import SystemUser, UserRole, UserSession
 from app.repositories import SystemUserRepository
 from app.services.audit import AuditService, get_changed_fields
 from app.models_audit import AuditAction
@@ -74,11 +74,13 @@ def login_for_access_token(
     """
     user = authenticate_user(db, form_data.username, form_data.password)
 
-    # Criar token JWT
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    # Criar sessão (controla o timeout de ociosidade) e token JWT referenciando-a via jti
+    session_id = uuid.uuid4().hex
+    db.add(UserSession(id=session_id, user_id=user.id))
+    db.commit()
+
     access_token = create_access_token(
-        data={"sub": user.username, "role": user.role.value},  # ← Adiciona role no token
-        expires_delta=access_token_expires
+        data={"sub": user.username, "role": user.role.value, "jti": session_id}
     )
 
     return {

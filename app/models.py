@@ -66,6 +66,16 @@ class SystemUser(Base):
     updated_by = relationship("SystemUser", foreign_keys=lambda: [SystemUser.updated_by_id], remote_side=lambda: [SystemUser.id], backref="users_updated")
 
 
+class UserSession(Base):
+    """Sessão de login (um token). Guarda a última atividade para expirar por ociosidade."""
+    __tablename__ = "user_sessions"
+
+    id = Column(String(64), primary_key=True)  # jti do token
+    user_id = Column(Integer, ForeignKey("system_users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    last_activity_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+
 # ============================================
 # TABELA 2: Clientes/Compradores
 # ============================================

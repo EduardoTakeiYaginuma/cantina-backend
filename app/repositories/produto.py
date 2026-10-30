@@ -11,11 +11,18 @@ class ProdutoRepository(BaseRepository[Produto]):
     def __init__(self, db: Session):
         super().__init__(Produto, db)
 
-    def search(self, search_term: str) -> List[Produto]:
+    def search(self, search_term: str, active_only: bool = True) -> List[Produto]:
         """Busca produtos por nome"""
-        return self.db.query(self.model).filter(
+        query = self.db.query(self.model).filter(
             self.model.nome.ilike(f"%{search_term}%")
-        ).all()
+        )
+        if active_only:
+            query = query.filter(self.model.is_active == True)
+        return query.all()
+
+    def get_all_products(self) -> List[Produto]:
+        """Busca todos os produtos, ativos e inativos"""
+        return self.db.query(self.model).all()
 
     def get_low_stock(self, threshold: int = 10) -> List[Produto]:
         """Busca produtos com estoque baixo"""

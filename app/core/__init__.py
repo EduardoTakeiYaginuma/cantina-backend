@@ -7,7 +7,7 @@ from .security import (
     get_password_hash,
     create_access_token,
     verify_token,
-    ACCESS_TOKEN_EXPIRE_MINUTES,
+    IDLE_TIMEOUT_MINUTES,
 )
 
 from .dependencies import (
@@ -25,7 +25,7 @@ __all__ = [
     "get_password_hash",
     "create_access_token",
     "verify_token",
-    "ACCESS_TOKEN_EXPIRE_MINUTES",
+    "IDLE_TIMEOUT_MINUTES",
     # Dependencies
     "oauth2_scheme",
     "get_current_user",

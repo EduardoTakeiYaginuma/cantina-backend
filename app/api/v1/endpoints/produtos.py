@@ -85,13 +85,13 @@ def read_produtos(
     produto_repo = ProdutoRepository(db)
 
     if search:
-        produtos = produto_repo.search(search)
+        produtos = produto_repo.search(search, active_only=bool(active_only))
     elif low_stock:
         produtos = produto_repo.get_low_stock()
     elif active_only:
         produtos = produto_repo.get_active_products()
     else:
-        produtos = produto_repo.get_all(skip=skip, limit=limit)
+        produtos = produto_repo.get_all_products()
 
     return produtos
 
@@ -235,6 +235,43 @@ def delete_produto(
     return {
         "message": f"Produto desativado com sucesso ({reason_text})",
         "is_active": False
+    }
+
+
+@router.post("/{produto_id}/activate")
+def activate_produto(
+        produto_id: int,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
+):
+    """Reativa um produto desativado"""
+    produto_repo = ProdutoRepository(db)
+    produto = produto_repo.get_by_id(produto_id)
+
+    if produto is None:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+
+    if produto.is_active:
+        raise HTTPException(status_code=400, detail="Produto já está ativo")
+
+    produto.is_active = True
+    produto.updated_by_id = current_user.id
+    produto.updated_at = datetime.now(timezone.utc)
+    produto_repo.update(produto)
+
+    audit = AuditService(db)
+    audit.log_product_action(
+        produto_id=produto_id,
+        action=AuditAction.ACTIVATE,
+        created_by_id=current_user.id,
+        old_values={"is_active": False},
+        new_values={"is_active": True},
+        description=f"Produto reativado por {current_user.username}"
+    )
+
+    return {
+        "message": "Produto reativado com sucesso",
+        "is_active": True
     }
 
 
