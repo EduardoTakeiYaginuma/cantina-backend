@@ -21,6 +21,8 @@ from app.models import (
 from app import schemas
 from app.services.audit import AuditService, get_changed_fields
 from app.models_audit import AuditAction
+from app.services.event import get_active_event, week_filter
+from app.services.excel_templates import add_instructions_sheet, pick_data_sheet
 
 router = APIRouter(prefix="/customers", tags=["customers"])
 
@@ -33,7 +35,7 @@ router = APIRouter(prefix="/customers", tags=["customers"])
 def create_customer(
         customer: schemas.CustomerCreate,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
+        current_user: SystemUser = Depends(get_current_user)  # ← Apenas ADMIN
 ):
     customer_repo = CustomerRepository(db)
 
@@ -41,11 +43,16 @@ def create_customer(
     if customer_repo.nickname_exists(customer.nickname):
         raise HTTPException(status_code=409, detail="Nickname já existe")
 
+    # Semana: definida pelo evento (semana atual). Sem evento ativo, aceita a informada.
+    event = get_active_event(db)
+    semana = event.semana_atual if event is not None else customer.semana
+
     # Criar novo cliente
     db_customer = Customers(
         nome=customer.nome,
         nickname=customer.nickname,
         quarto=customer.quarto,
+        semana=semana,
         saldo=customer.saldo or 0.0,
         tipo=customer.tipo or CustomerTipo.ACAMPANTE,
         nome_pai=customer.nome_pai,
@@ -68,6 +75,7 @@ def create_customer(
             "tipo": created_customer.tipo.value,
             "saldo": created_customer.saldo,
             "quarto": created_customer.quarto,
+            "semana": created_customer.semana,
             "informacoes_contato": created_customer.informacoes_contato
         },
         description=f"Cliente criado por {current_user.username}"
@@ -80,12 +88,15 @@ def create_customer(
 @router.get("", response_model=List[schemas.CustomerResponse])
 def read_customers(
         skip: int = 0,
-        limit: int = 100,
+        limit: Optional[int] = Query(None, ge=1, description="Máximo de registros (padrão: todos)"),
         nome: Optional[str] = Query(None, description="Buscar por nome"),
         nickname: Optional[str] = Query(None, description="Buscar por ou nickname"),
         tipo: Optional[CustomerTipo] = Query(None, description="Filtrar por tipo"),
         customer_id: Optional[int] = Query(None, description="Buscar por ID"),
         is_active: Optional[bool] = Query(None, description="Filtrar por status ativo/inativo"),
+        semana: Optional[int] = Query(None, description="Filtrar por semana (0 = sem semana definida)"),
+        current_week_only: bool = Query(False, description="Só clientes da semana atual do evento (+ equipe)"),
+        semana_presente: Optional[int] = Query(None, description="Clientes desta semana (+ equipe)"),
         db: Session = Depends(get_db)
 ):
     """Lista todos os clientes com filtros opcionais"""
@@ -111,9 +122,19 @@ def read_customers(
         query = query.filter(Customers.nickname.ilike(f"%{nickname}%"))
     if tipo:
         query = query.filter(Customers.tipo == tipo)
+    if semana is not None:
+        query = query.filter(Customers.semana.is_(None) if semana == 0 else Customers.semana == semana)
+    if current_week_only:
+        event = get_active_event(db)
+        if event is not None:
+            query = query.filter(week_filter(event.semana_atual))
+    if semana_presente is not None:
+        query = query.filter(week_filter(semana_presente))
 
-    customers = query.offset(skip).limit(limit).all()
-    return customers
+    query = query.order_by(Customers.nome).offset(skip)
+    if limit is not None:
+        query = query.limit(limit)
+    return query.all()
 
 
 @router.get("/{customer_id}", response_model=schemas.CustomerResponse)
@@ -137,7 +158,7 @@ def update_customer(
         customer_id: int,
         customer_update: schemas.CustomerUpdate,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
+        current_user: SystemUser = Depends(get_current_user)  # ← Apenas ADMIN
 ):
     """Atualiza dados de um cliente"""
     from datetime import datetime, timezone
@@ -166,7 +187,7 @@ def update_customer(
 
     # Registrar quem e quando atualizou
     customer.updated_by_id = current_user.id
-    customer.updated_at = datetime.now(timezone.utc)
+    customer.updated_at = datetime.now()
 
     updated_customer = customer_repo.update(customer)
 
@@ -189,7 +210,7 @@ def update_customer(
 def delete_customer(
         customer_id: int,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
+        current_user: SystemUser = Depends(get_current_user)  # ← Apenas ADMIN
 ):
     """
     Deleta um cliente (soft delete - apenas desativa).
@@ -225,7 +246,7 @@ def delete_customer(
     # SEMPRE soft delete (desativa)
     customer.is_active = False
     customer.updated_by_id = current_user.id
-    customer.updated_at = datetime.now(timezone.utc)
+    customer.updated_at = datetime.now()
     customer_repo.update(customer)
 
     # 🆕 AUDITORIA: Registrar desativação
@@ -254,7 +275,7 @@ def manage_balance(
         customer_id: int,
         operation: schemas.BalanceOperation,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN para gerenciar saldo manualmente
+        current_user: SystemUser = Depends(get_current_user)  # ← Apenas ADMIN para gerenciar saldo manualmente
 ):
     """
     Adiciona ou remove saldo de um cliente. 
@@ -374,7 +395,7 @@ def get_customer_sales_summary(
 @router.get("/{customer_id}/purchases", response_model=schemas.CustomerPurchaseHistory)
 def get_customer_purchases(
         customer_id: int,
-        limit: int = Query(50, description="Número máximo de registros"),
+        limit: int = Query(1000, ge=1, description="Número máximo de registros"),
         db: Session = Depends(get_db),
         current_user: SystemUser = Depends(get_current_user)
 ):
@@ -407,6 +428,7 @@ def get_customer_purchases(
             "total_amount": sale.total_amount,
             "created_at": sale.created_at,
             "is_cancelled": sale.is_cancelled,
+            "observacao": sale.observacao,
             "items": items,
         })
 
@@ -426,7 +448,7 @@ def get_customer_purchases(
 def activate_customer(
         customer_id: int,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_user)
 ):
     """Reativa um cliente desativado"""
     customer_repo = CustomerRepository(db)
@@ -440,7 +462,7 @@ def activate_customer(
 
     customer.is_active = True
     customer.updated_by_id = current_user.id
-    customer.updated_at = datetime.now(timezone.utc)
+    customer.updated_at = datetime.now()
     updated = customer_repo.update(customer)
 
     audit = AuditService(db)
@@ -462,7 +484,7 @@ def activate_customer(
 
 @router.get("/template/download")
 def download_customer_template(
-        current_user: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_user)
 ):
     """Gera e retorna o template Excel para importação de clientes"""
     wb = openpyxl.Workbook()
@@ -479,17 +501,29 @@ def download_customer_template(
             cell.font = header_font
             cell.alignment = Alignment(horizontal="center")
 
-        if tipo_label == "acampante":
-            ws.append(["João Silva", "joao", "101", "Carlos Silva", "Ana Silva", "", 50.0])
-        else:
-            ws.append(["Maria Santos", "maria", "", "", "", "Coordenadora", 0.0])
-
         for col_letter, width in zip("ABCDEFG", [30, 20, 10, 25, 25, 30, 10]):
             ws.column_dimensions[col_letter].width = width
 
     # Remover sheet padrão vazio
     if "Sheet" in wb.sheetnames:
         del wb["Sheet"]
+
+    add_instructions_sheet(
+        wb,
+        [
+            "Preencha os clientes nas abas ACAMPANTES e EQUIPE, a partir da linha 2.",
+            "Obrigatórios: nome e nickname (apelido, único). Os demais campos são opcionais.",
+            "quarto: use um dos quartos da semana atual do evento.",
+            "saldo: número (ex.: 50 ou 50.5). Em branco = 0.",
+            "A semana do cliente é a semana atual do evento no momento da importação.",
+            "Apelidos que já existem no sistema são ignorados.",
+        ],
+        headers,
+        [
+            ["João Silva", "joao", "M1", "Carlos Silva", "Ana Silva", "(11) 99999-9999", 50.0],
+            ["Maria Santos", "maria", "", "", "", "Coordenadora", 0.0],
+        ],
+    )
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -506,7 +540,7 @@ def download_customer_template(
 def import_customers_from_excel(
         file: UploadFile = File(...),
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_user)
 ):
     """Importa clientes em massa a partir de um arquivo Excel com abas ACAMPANTES e EQUIPE"""
     if not file.filename.endswith((".xlsx", ".xls")):
@@ -520,6 +554,8 @@ def import_customers_from_excel(
 
     customer_repo = CustomerRepository(db)
     audit = AuditService(db)
+    event = get_active_event(db)
+    default_semana = event.semana_atual if event else None
 
     imported_count = 0
     skipped_count = 0
@@ -540,8 +576,8 @@ def import_customers_from_excel(
             sheets_to_process.append((wb[sheet_name], tipo))
 
     if not sheets_to_process:
-        # Arquivo sem abas padrão: trata a primeira aba como ACAMPANTES
-        sheets_to_process = [(wb.active, CustomerTipo.ACAMPANTE)]
+        # Arquivo sem abas padrão: trata a primeira aba de dados como ACAMPANTES
+        sheets_to_process = [(pick_data_sheet(wb, "ACAMPANTES"), CustomerTipo.ACAMPANTE)]
 
     for ws, tipo in sheets_to_process:
         rows = list(ws.iter_rows(min_row=2, values_only=True))
@@ -576,6 +612,7 @@ def import_customers_from_excel(
                 nome=nome,
                 nickname=nickname,
                 quarto=quarto or None,
+                semana=default_semana,
                 saldo=saldo,
                 tipo=tipo,
                 nome_pai=nome_pai or None,
@@ -632,7 +669,7 @@ def list_customer_import_batches(
         limit: int = 50,
         include_rolled_back: bool = True,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_user)
 ):
     """Lista todos os batches de importação de clientes"""
     query = db.query(CustomerImportBatch)
@@ -674,7 +711,7 @@ def list_customer_import_batches(
 def get_customer_import_batch_details(
         batch_id: int,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_user)
 ):
     """Retorna detalhes de um batch de importação de clientes"""
     batch = db.query(CustomerImportBatch).filter(CustomerImportBatch.id == batch_id).first()
@@ -714,7 +751,7 @@ def get_customer_import_batch_details(
 def rollback_customer_import_batch(
         batch_id: int,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_user)
 ):
     """Reverte um batch de importação deletando os clientes importados"""
     batch = db.query(CustomerImportBatch).filter(CustomerImportBatch.id == batch_id).first()
@@ -749,7 +786,7 @@ def rollback_customer_import_batch(
     ).delete()
 
     batch.status = "rolled_back"
-    batch.rolled_back_at = datetime.now(timezone.utc)
+    batch.rolled_back_at = datetime.now()
     batch.rolled_back_by_id = current_user.id
 
     db.commit()

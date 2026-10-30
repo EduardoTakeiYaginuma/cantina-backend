@@ -21,6 +21,7 @@ class CustomerBase(BaseModel):
     nome_pai: Optional[str] = Field(None, max_length=255)
     nome_mae: Optional[str] = Field(None, max_length=255)
     informacoes_contato: Optional[str] = Field(None, max_length=500)
+    semana: Optional[int] = Field(None, ge=1, le=10, description="Semana do evento (1 = evento todo)")
 
 
 class CustomerCreate(CustomerBase):
@@ -39,6 +40,7 @@ class CustomerUpdate(BaseModel):
     nome_mae: Optional[str] = Field(None, max_length=255)
     informacoes_contato: Optional[str] = Field(None, max_length=500)
     is_active: Optional[bool] = None
+    semana: Optional[int] = Field(None, ge=1, le=10)
 
 
 class CustomerResponse(CustomerBase):
@@ -72,6 +74,7 @@ class CustomerNegativeBalance(BaseModel):
     tipo: str
     saldo: float
     quarto: Optional[str] = None
+    semana: Optional[int] = None
 
 
 class PurchaseItemResponse(BaseModel):
@@ -89,6 +92,7 @@ class PurchaseResponse(BaseModel):
     total_amount: float
     created_at: datetime
     is_cancelled: bool
+    observacao: Optional[str] = None
     items: List["PurchaseItemResponse"]
 
 

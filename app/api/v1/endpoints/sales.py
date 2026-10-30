@@ -13,6 +13,8 @@ from app.core.dependencies import get_current_user, get_current_active_admin
 from app.models import SystemUser, Sale, SaleItem, Customers, Produto
 from app import schemas
 from app.services.audit import AuditService
+from app.services.combined_sales import query_guest_sales, sort_sales
+from app.models import GuestSale
 
 router = APIRouter(prefix="/sales", tags=["sales"])
 
@@ -36,6 +38,9 @@ def create_sale(
     - Registra auditoria
     """
     try:
+        # Normalizar observação (vazia vira None)
+        observacao = (sale.observacao or "").strip() or None
+
         # Buscar cliente
         customer = db.query(Customers).filter(Customers.id == sale.customer_id).first()
         if not customer:
@@ -94,7 +99,8 @@ def create_sale(
             customer_id=customer.id,
             created_by_id=current_user.id,
             total_amount=total_amount,
-            is_cancelled=False
+            is_cancelled=False,
+            observacao=observacao
         )
         db.add(db_sale)
         db.flush()  # Obter o ID da venda
@@ -140,7 +146,8 @@ def create_sale(
             ],
             old_customer_balance=old_balance,
             new_customer_balance=customer.saldo,
-            created_by_id=current_user.id
+            created_by_id=current_user.id,
+            observacao=observacao
         )
 
         db.commit()
@@ -165,6 +172,7 @@ def create_sale(
             "cancelled_by_id": db_sale.cancelled_by_id,
             "cancelled_by_username": None,  # Nova venda nunca está cancelada
             "cancellation_reason": db_sale.cancellation_reason,
+            "observacao": db_sale.observacao,
             "items": [
                 {
                     "id": sale_item.id,
@@ -230,6 +238,7 @@ def list_sales(
             "cancelled_by_id": sale.cancelled_by_id,
             "cancelled_by_username": sale.cancelled_by.username if sale.cancelled_by else None,
             "cancellation_reason": sale.cancellation_reason,
+            "observacao": sale.observacao,
             "items": [
                 {
                     "id": item.id,
@@ -272,6 +281,9 @@ def get_sales_report(
 
         # Incluir canceladas
         include_cancelled: bool = Query(False, description="Incluir vendas canceladas"),
+
+        # Incluir vendas avulsas (sem cliente cadastrado)
+        include_guest: bool = Query(True, description="Incluir vendas avulsas"),
 
         # Paginação e ordenação
         skip: int = Query(0, description="Número de registros para pular"),
@@ -341,11 +353,24 @@ def get_sales_report(
     else:
         query = query.order_by(Sale.created_at.desc())
 
-    # Contar total antes da paginação
-    total_records = query.count()
+    if include_guest:
+        # Junta vendas normais e avulsas, ordena e pagina em memória
+        guest_sales = query_guest_sales(
+            db,
+            date_from=date_from, date_to=date_to, customer_id=customer_id,
+            produto_id=produto_id, created_by_id=created_by_id,
+            min_amount=min_amount, max_amount=max_amount, search=search,
+            include_cancelled=include_cancelled,
+        )
+        all_sales = sort_sales(query.all() + guest_sales, order_by)
+        total_records = len(all_sales)
+        sales = all_sales[skip:skip + limit]
+    else:
+        # Contar total antes da paginação
+        total_records = query.count()
 
-    # Aplicar paginação
-    sales = query.offset(skip).limit(limit).all()
+        # Aplicar paginação
+        sales = query.offset(skip).limit(limit).all()
 
     # Calcular totalizadores APENAS das vendas ativas retornadas
     total_amount_all = sum(float(sale.total_amount) for sale in sales)
@@ -372,6 +397,10 @@ def get_sales_report(
             "cancelled_by_id": sale.cancelled_by_id,
             "cancelled_by_username": sale.cancelled_by.username if sale.cancelled_by else None,
             "cancellation_reason": sale.cancellation_reason,
+            "observacao": sale.observacao,
+            "is_guest_sale": getattr(sale, "is_guest_sale", False),
+            "valor_pago": getattr(sale, "valor_pago", None),
+            "troco": getattr(sale, "troco", None),
             "items_count": len(sale.items),
             "items": [
                 {
@@ -407,6 +436,31 @@ def get_sales_report(
             "average_ticket": float(total_amount_all / len(sales_data)) if sales_data else 0
         },
         "sales": sales_data
+    }
+
+
+@router.get("/stats/today")
+def get_today_stats(
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """Totais de hoje (vendas normais + avulsas, sem as canceladas)."""
+    today = date.today()
+
+    normal_total, normal_count = db.query(
+        func.coalesce(func.sum(Sale.total_amount), 0.0), func.count(Sale.id)
+    ).filter(func.date(Sale.created_at) == today, Sale.is_cancelled == False).one()
+
+    guest_total, guest_count = db.query(
+        func.coalesce(func.sum(GuestSale.total_amount), 0.0), func.count(GuestSale.id)
+    ).filter(func.date(GuestSale.created_at) == today, GuestSale.is_cancelled == False).one()
+
+    return {
+        "date": today.isoformat(),
+        "total_amount": round(float(normal_total) + float(guest_total), 2),
+        "total_count": int(normal_count) + int(guest_count),
+        "normal_sales": {"total_amount": round(float(normal_total), 2), "count": int(normal_count)},
+        "guest_sales": {"total_amount": round(float(guest_total), 2), "count": int(guest_count)},
     }
 
 
@@ -458,6 +512,7 @@ def get_customer_sales_history(
                 "cancelled_by_id": sale.cancelled_by_id,
                 "cancelled_by_username": sale.cancelled_by.username if sale.cancelled_by else None,
                 "cancellation_reason": sale.cancellation_reason,
+                "observacao": sale.observacao,
                 "created_by_username": sale.created_by.username if sale.created_by else "N/A",
                 "items_count": len(sale.items)
             }
@@ -496,6 +551,7 @@ def get_sale(
         "cancelled_by_id": sale.cancelled_by_id,
         "cancelled_by_username": sale.cancelled_by.username if sale.cancelled_by else None,
         "cancellation_reason": sale.cancellation_reason,
+        "observacao": sale.observacao,
         "items": [
             {
                 "id": item.id,
@@ -516,7 +572,7 @@ def cancel_sale(
         sale_id: int,
         cancellation: schemas.SaleCancellation,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_user)
 ):
     """
     Cancela uma venda (soft delete).
@@ -550,7 +606,7 @@ def cancel_sale(
 
         # Marcar venda como cancelada
         sale.is_cancelled = True
-        sale.cancelled_at = datetime.utcnow()
+        sale.cancelled_at = datetime.now()
         sale.cancelled_by_id = current_user.id
         sale.cancellation_reason = cancellation.reason
 

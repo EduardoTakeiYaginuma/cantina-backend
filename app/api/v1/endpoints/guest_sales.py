@@ -46,12 +46,30 @@ def create_guest_sale(
             "total_price": item_total,
         })
 
+    # Pagamento: se informado, precisa cobrir o total; o troco é calculado aqui
+    total_amount = round(total_amount, 2)
+    valor_pago = round(sale.valor_pago, 2) if sale.valor_pago is not None else None
+    troco = None
+    if valor_pago is not None:
+        if valor_pago < total_amount:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Valor pago (R$ {valor_pago:.2f}) é menor que o total da compra (R$ {total_amount:.2f})"
+            )
+        troco = round(valor_pago - total_amount, 2)
+
+    observacao = (sale.observacao or "").strip() or None
+    guest_name = (sale.guest_name or "").strip() or "Cliente Avulso"
+
     try:
         db_sale = GuestSale(
-            guest_name=sale.guest_name or "Cliente Avulso",
+            guest_name=guest_name,
             created_by_id=current_user.id,
             total_amount=total_amount,
             is_cancelled=False,
+            valor_pago=valor_pago,
+            troco=troco,
+            observacao=observacao,
         )
         db.add(db_sale)
         db.flush()
@@ -83,6 +101,9 @@ def create_guest_sale(
             "cancelled_at": None,
             "cancelled_by_id": None,
             "cancellation_reason": None,
+            "valor_pago": db_sale.valor_pago,
+            "troco": db_sale.troco,
+            "observacao": db_sale.observacao,
             "items": [
                 {
                     "id": si.id,
@@ -108,7 +129,7 @@ def create_guest_sale(
 @router.get("/", response_model=List[schemas.GuestSaleResponse])
 def list_guest_sales(
         skip: int = Query(0, ge=0),
-        limit: int = Query(50, ge=1, le=500),
+        limit: int = Query(50, ge=1, le=100000),
         date_from: Optional[date] = Query(None),
         date_to: Optional[date] = Query(None),
         guest_name: Optional[str] = Query(None),
@@ -149,6 +170,9 @@ def list_guest_sales(
             "cancelled_at": sale.cancelled_at,
             "cancelled_by_id": sale.cancelled_by_id,
             "cancellation_reason": sale.cancellation_reason,
+            "valor_pago": sale.valor_pago,
+            "troco": sale.troco,
+            "observacao": sale.observacao,
             "items": [
                 {
                     "id": item.id,
@@ -187,6 +211,9 @@ def get_guest_sale(
         "cancelled_at": sale.cancelled_at,
         "cancelled_by_id": sale.cancelled_by_id,
         "cancellation_reason": sale.cancellation_reason,
+        "valor_pago": sale.valor_pago,
+        "troco": sale.troco,
+        "observacao": sale.observacao,
         "items": [
             {
                 "id": item.id,
@@ -207,7 +234,7 @@ def cancel_guest_sale(
         sale_id: int,
         cancellation: schemas.GuestSaleCancellation,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_user)
 ):
     sale = db.query(GuestSale).filter(GuestSale.id == sale_id).first()
     if not sale:
@@ -222,7 +249,7 @@ def cancel_guest_sale(
                 produto.estoque += item.quantity
 
         sale.is_cancelled = True
-        sale.cancelled_at = datetime.now(timezone.utc)
+        sale.cancelled_at = datetime.now()
         sale.cancelled_by_id = current_user.id
         sale.cancellation_reason = cancellation.reason
 

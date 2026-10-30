@@ -39,7 +39,7 @@ class CustomerAuditLog(Base):
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
     action = Column(Enum(AuditAction), nullable=False)
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(), index=True)
 
     # Dados da mudança (JSON para flexibilidade)
     old_values = Column(JSON, nullable=True)  # Valores antes da mudança
@@ -73,7 +73,7 @@ class ProductAuditLog(Base):
     produto_id = Column(Integer, ForeignKey("produtos.id"), nullable=False)
     action = Column(Enum(AuditAction), nullable=False)
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(), index=True)
 
     old_values = Column(JSON, nullable=True)
     new_values = Column(JSON, nullable=True)
@@ -104,7 +104,7 @@ class SystemUserAuditLog(Base):
     user_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     action = Column(Enum(AuditAction), nullable=False)
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(), index=True)
 
     old_values = Column(JSON, nullable=True)
     new_values = Column(JSON, nullable=True)
@@ -135,7 +135,7 @@ class SaleAuditLog(Base):
     sale_id = Column(Integer, nullable=False)  # Não usa FK pois venda pode ser deletada
     action = Column(Enum(AuditAction), nullable=False)
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(), index=True)
 
     old_values = Column(JSON, nullable=True)
     new_values = Column(JSON, nullable=True)

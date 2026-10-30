@@ -143,6 +143,13 @@ class BackupManager:
             # Replace the current database with the backup
             shutil.copy2(temp_db_path, self.db_path)
 
+            # Backups antigos guardam horários em UTC: converte para o horário local
+            from database import engine
+            from app import models, models_audit  # noqa: F401 (registra as tabelas)
+            from app.core.timezone_migration import convert_utc_timestamps_to_local
+            engine.dispose()
+            convert_utc_timestamps_to_local(engine, models.Base.metadata)
+
             # Clean up decompressed file
             if temp_db_path and temp_db_path.exists():
                 temp_db_path.unlink()

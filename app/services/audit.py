@@ -240,7 +240,8 @@ class AuditService:
         items: list,
         old_customer_balance: float,
         new_customer_balance: float,
-        created_by_id: int
+        created_by_id: int,
+        observacao: str = None
     ):
         """
         Registra a criação de uma venda.
@@ -258,7 +259,8 @@ class AuditService:
                 "items_count": items_count,
                 "items": items,
                 "old_customer_balance": old_customer_balance,
-                "new_customer_balance": new_customer_balance
+                "new_customer_balance": new_customer_balance,
+                "observacao": observacao
             },
             description=f"Sale create - Sale ID: {sale_id}"
         )

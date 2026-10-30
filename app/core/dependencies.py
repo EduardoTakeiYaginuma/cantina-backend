@@ -121,6 +121,22 @@ def require_admin(current_user: SystemUser = Depends(get_current_user)) -> Syste
     return current_user
 
 
+def is_admin(user: SystemUser) -> bool:
+    return user.role == UserRole.ADMIN
+
+
+def restrict_to_own_logs(current_user: SystemUser, user_id: Optional[int]) -> Optional[int]:
+    """Operador só enxerga as próprias ações; admin enxerga as de todos (logs do sistema)."""
+    if is_admin(current_user):
+        return user_id
+    if user_id is not None and user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Apenas administradores podem ver as ações de outros usuários.",
+        )
+    return current_user.id
+
+
 def require_active_user(current_user: SystemUser = Depends(get_current_user)) -> SystemUser:
     """
     Dependency: Verifica se o usuário está ativo.

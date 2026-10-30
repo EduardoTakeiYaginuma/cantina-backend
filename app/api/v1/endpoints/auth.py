@@ -134,7 +134,7 @@ def change_my_password(
 @router.get("/users", response_model=list[schemas.SystemUserResponse])
 def list_users(
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_admin: SystemUser = Depends(get_current_user)
 ):
     """
     Lista todos os usuários do sistema.
@@ -175,7 +175,7 @@ def deactivate_user(
 
     user.is_active = False
     user.updated_by_id = current_admin.id  # ← Registra quem desativou
-    user.updated_at = datetime.now(timezone.utc)
+    user.updated_at = datetime.now()
     user_repo.update(user)
 
     # 🆕 AUDITORIA: Registrar desativação
@@ -211,7 +211,7 @@ def activate_user(
 
     user.is_active = True
     user.updated_by_id = current_admin.id  # ← Registra quem ativou
-    user.updated_at = datetime.now(timezone.utc)
+    user.updated_at = datetime.now()
     user_repo.update(user)
 
     # 🆕 AUDITORIA: Registrar ativação
@@ -256,7 +256,7 @@ def change_user_role(
     old_role = user.role
     user.role = role_data.new_role
     user.updated_by_id = current_admin.id  # ← Registra quem alterou
-    user.updated_at = datetime.now(timezone.utc)
+    user.updated_at = datetime.now()
     user_repo.update(user)
 
     # 🆕 AUDITORIA: Registrar mudança de role
@@ -294,7 +294,7 @@ def admin_change_user_password(
 
     user.hashed_password = get_password_hash(password_data.new_password)
     user.updated_by_id = current_admin.id  # ← Registra quem alterou
-    user.updated_at = datetime.now(timezone.utc)
+    user.updated_at = datetime.now()
     user_repo.update(user)
 
     # 🆕 AUDITORIA: Registrar mudança de senha (sem mostrar a senha!)

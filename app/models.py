@@ -12,7 +12,8 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Text,
-    Enum
+    Enum,
+    JSON,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -50,9 +51,9 @@ class SystemUser(Base):
     is_active = Column(Boolean, default=True)
 
     # Campos de auditoria
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now())
     created_by_id = Column(Integer, ForeignKey("system_users.id"))
-    updated_at = Column(DateTime, onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, onupdate=lambda: datetime.now())
     updated_by_id = Column(Integer, ForeignKey("system_users.id"))
 
     # Relacionamentos reversos (especificando foreign_keys para evitar ambiguidade)
@@ -95,10 +96,13 @@ class Customers(Base):
     informacoes_contato = Column(String(500))
     is_active = Column(Boolean, default=True)
 
+    # Semana do evento em que o cliente participa (1 = evento todo; None = sem semana definida)
+    semana = Column(Integer, nullable=True, index=True)
+
     # Campos de auditoria
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now())
     created_by_id = Column(Integer, ForeignKey("system_users.id"))
-    updated_at = Column(DateTime, onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, onupdate=lambda: datetime.now())
     updated_by_id = Column(Integer, ForeignKey("system_users.id"))
 
     # Relationships
@@ -134,9 +138,9 @@ class Produto(Base):
     is_active = Column(Boolean, default=True)
 
     # Campos de auditoria
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now())
     created_by_id = Column(Integer, ForeignKey("system_users.id"))
-    updated_at = Column(DateTime, onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, onupdate=lambda: datetime.now())
     updated_by_id = Column(Integer, ForeignKey("system_users.id"))
 
     # Relationships
@@ -157,13 +161,16 @@ class Sale(Base):
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
     total_amount = Column(Float, nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now())
 
     # Soft delete / Cancelamento
     is_cancelled = Column(Boolean, default=False, nullable=False, index=True)
     cancelled_at = Column(DateTime, nullable=True)
     cancelled_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
     cancellation_reason = Column(Text, nullable=True)
+
+    # Observação livre informada no momento da venda
+    observacao = Column(Text, nullable=True)
 
     # Relationships (especificando foreign_keys explicitamente)
     customer = relationship("Customers", back_populates="sales")
@@ -202,7 +209,7 @@ class Restock(Base):
     produto_id = Column(Integer, ForeignKey("produtos.id"), nullable=False)
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     quantity = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now())
 
     # Relationships
     produto = relationship("Produto", back_populates="restocks")
@@ -222,7 +229,7 @@ class BalanceTransaction(Base):
     amount = Column(Float, nullable=False)
     transaction_type = Column(String(50), nullable=False)
     description = Column(Text)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now())
 
     # Relationships
     customer = relationship("Customers", back_populates="balance_transactions")
@@ -240,12 +247,17 @@ class GuestSale(Base):
     guest_name = Column(String(255), nullable=True)
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     total_amount = Column(Float, nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now())
 
     is_cancelled = Column(Boolean, default=False, nullable=False, index=True)
     cancelled_at = Column(DateTime, nullable=True)
     cancelled_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
     cancellation_reason = Column(Text, nullable=True)
+
+    # Pagamento em dinheiro e observação livre
+    valor_pago = Column(Float, nullable=True)
+    troco = Column(Float, nullable=True)
+    observacao = Column(Text, nullable=True)
 
     created_by = relationship("SystemUser", foreign_keys=[created_by_id])
     cancelled_by = relationship("SystemUser", foreign_keys=[cancelled_by_id])
@@ -279,7 +291,7 @@ class ProductImportBatch(Base):
     skipped_count = Column(Integer, default=0)
     error_count = Column(Integer, default=0)
     status = Column(String(50), default="completed")  # completed | rolled_back
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now())
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     rolled_back_at = Column(DateTime, nullable=True)
     rolled_back_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
@@ -313,7 +325,7 @@ class CustomerImportBatch(Base):
     skipped_count = Column(Integer, default=0)
     error_count = Column(Integer, default=0)
     status = Column(String(50), default="completed")  # completed | rolled_back
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now())
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     rolled_back_at = Column(DateTime, nullable=True)
     rolled_back_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
@@ -332,3 +344,74 @@ class CustomerImportBatchItem(Base):
 
     batch = relationship("CustomerImportBatch", back_populates="items")
     customer = relationship("Customers")
+
+
+# ============================================
+# TABELA: Configuração do Evento (nome, semanas e quartos)
+# ============================================
+
+def default_week_name(week: int) -> str:
+    """Nome padrão: a primeira semana é a da equipe; as seguintes são "Semana 1", "Semana 2"..."""
+    return "Equipe" if week == 1 else f"Semana {week - 1}"
+
+
+class EventConfig(Base):
+    __tablename__ = "event_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_name = Column(String(255), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    num_semanas = Column(Integer, default=3, nullable=False)
+    semana_atual = Column(Integer, default=1, nullable=False)
+    # Nomes das semanas (lista JSON). Vazio = padrão: "Equipe", "Semana 1", "Semana 2"...
+    semanas_nomes_raw = Column("semanas_nomes", JSON, nullable=True)
+
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now())
+    updated_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+    updated_at = Column(DateTime, onupdate=lambda: datetime.now())
+
+    @property
+    def semanas_nomes(self):
+        """Nome de cada semana (1..num_semanas), com o padrão nas que não foram renomeadas."""
+        raw = self.semanas_nomes_raw or []
+        names = []
+        for i in range(1, (self.num_semanas or 0) + 1):
+            name = raw[i - 1].strip() if i - 1 < len(raw) and isinstance(raw[i - 1], str) else ""
+            names.append(name or default_week_name(i))
+        return names
+
+    rooms = relationship(
+        "EventRoom",
+        back_populates="event_config",
+        cascade="all, delete-orphan",
+        order_by="EventRoom.display_order",
+    )
+
+
+class EventRoom(Base):
+    __tablename__ = "event_rooms"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_config_id = Column(Integer, ForeignKey("event_configs.id"), nullable=False, index=True)
+    room_name = Column(String(100), nullable=False)
+    # Cada semana do evento tem os seus quartos
+    semana = Column(Integer, default=1, nullable=False, index=True)
+    display_order = Column(Integer, default=0, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now())
+
+    event_config = relationship("EventConfig", back_populates="rooms")
+
+
+# ============================================
+# TABELA: Configurações do sistema (chave/valor)
+# ============================================
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=lambda: datetime.now(), onupdate=lambda: datetime.now())

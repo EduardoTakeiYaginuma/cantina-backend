@@ -27,7 +27,7 @@ backup_manager = BackupManager()
 
 @router.post("/create", response_model=schemas.BackupResponse)
 def create_backup(
-        current_admin: SystemUser = Depends(require_admin)  # ← Apenas ADMIN
+        current_admin: SystemUser = Depends(get_current_user)  # ← Apenas ADMIN
 ):
     """
     Cria um novo backup do banco de dados. 
@@ -64,7 +64,7 @@ def list_backups(
 @router.post("/restore/{filename}", response_model=schemas.BackupResponse)
 def restore_backup(
         filename: str,
-        current_admin: SystemUser = Depends(require_admin)  # ← Apenas ADMIN
+        current_admin: SystemUser = Depends(get_current_user)  # ← Apenas ADMIN
 ):
     """
     Restaura o banco de dados a partir de um backup.
@@ -96,7 +96,7 @@ def restore_backup(
 @router.delete("/delete/{filename}", response_model=schemas.BackupResponse)
 def delete_backup(
         filename: str,
-        current_admin: SystemUser = Depends(require_admin)  # ← Apenas ADMIN
+        current_admin: SystemUser = Depends(get_current_user)  # ← Apenas ADMIN
 ):
     """
     Deleta um arquivo de backup.
@@ -126,7 +126,7 @@ def delete_backup(
 
 @router.post("/clear-database", response_model=schemas.BackupResponse)
 def clear_database(
-        current_admin: SystemUser = Depends(require_admin)  # ← Apenas ADMIN
+        current_admin: SystemUser = Depends(get_current_user)  # ← Apenas ADMIN
 ):
     """
     Limpa todos os dados do banco (mantém a estrutura).
@@ -164,7 +164,7 @@ def get_auto_backup_status(
 @router.post("/download/{filename}")
 def download_backup(
         filename: str,
-        current_admin: SystemUser = Depends(require_admin)
+        current_admin: SystemUser = Depends(get_current_user)
 ):
     """
     Download de um arquivo de backup.
@@ -197,7 +197,7 @@ def download_backup(
 
 @router.get("/download")
 def download_database(
-        current_admin: SystemUser = Depends(require_admin)
+        current_admin: SystemUser = Depends(get_current_user)
 ):
     """
     Faz o download direto do banco de dados atual (.db).
@@ -226,7 +226,7 @@ def download_database(
 @router.post("/restore", response_model=schemas.BackupResponse)
 async def restore_from_upload(
         file: UploadFile = File(...),
-        current_admin: SystemUser = Depends(require_admin)
+        current_admin: SystemUser = Depends(get_current_user)
 ):
     """
     Restaura o banco de dados a partir de um arquivo .db enviado pelo cliente.

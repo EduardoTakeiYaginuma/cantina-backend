@@ -41,3 +41,7 @@ httpx==0.25.2  # Cliente HTTP para testes de API (alternativa ao requests)
 openpyxl==3.1.2  # Criar e ler arquivos Excel (.xlsx) - usado para exportar relatórios formatados
 reportlab==4.0.7  # Gerar arquivos PDF - usado para exportar relatórios formais e compliance
 
+# ============================================
+# REDE LOCAL
+# ============================================
+zeroconf==0.131.0  # Anuncia o nome de acesso na rede (ex.: http://cantina.local:8080) via mDNS

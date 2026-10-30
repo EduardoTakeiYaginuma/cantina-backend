@@ -12,6 +12,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 
 from database import get_db
+from app.services.excel_templates import add_instructions_sheet, pick_data_sheet
 from app.core.dependencies import get_current_user, get_current_active_admin
 from app.repositories import ProdutoRepository
 from app.models import SystemUser, Produto, SaleItem, Restock, ProductImportBatch, ProductImportBatchItem
@@ -30,7 +31,7 @@ router = APIRouter(prefix="/produtos", tags=["produtos"])
 def create_produto(
         produto: schemas.ProdutoCreate,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
+        current_user: SystemUser = Depends(get_current_user)  # ← Apenas ADMIN
 ):
     """Cria um novo produto"""
     produto_repo = ProdutoRepository(db)
@@ -117,7 +118,7 @@ def update_produto(
         produto_id: int,
         produto_update: schemas.ProdutoUpdate,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
+        current_user: SystemUser = Depends(get_current_user)  # ← Apenas ADMIN
 ):
     """Atualiza dados de um produto"""
     from datetime import datetime, timezone
@@ -146,7 +147,7 @@ def update_produto(
 
     # Registrar quem e quando atualizou
     produto.updated_by_id = current_user.id
-    produto.updated_at = datetime.now(timezone.utc)
+    produto.updated_at = datetime.now()
 
     updated_produto = produto_repo.update(produto)
 
@@ -184,7 +185,7 @@ def update_produto(
 def delete_produto(
         produto_id: int,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
+        current_user: SystemUser = Depends(get_current_user)  # ← Apenas ADMIN
 ):
     """
     Deleta um produto (soft delete - apenas desativa).
@@ -218,7 +219,7 @@ def delete_produto(
     # SEMPRE soft delete (desativa)
     produto.is_active = False
     produto.updated_by_id = current_user.id
-    produto.updated_at = datetime.now(timezone.utc)
+    produto.updated_at = datetime.now()
     produto_repo.update(produto)
 
     # 🆕 AUDITORIA: Registrar desativação
@@ -242,7 +243,7 @@ def delete_produto(
 def activate_produto(
         produto_id: int,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN
+        current_user: SystemUser = Depends(get_current_user)  # ← Apenas ADMIN
 ):
     """Reativa um produto desativado"""
     produto_repo = ProdutoRepository(db)
@@ -256,7 +257,7 @@ def activate_produto(
 
     produto.is_active = True
     produto.updated_by_id = current_user.id
-    produto.updated_at = datetime.now(timezone.utc)
+    produto.updated_at = datetime.now()
     produto_repo.update(produto)
 
     audit = AuditService(db)
@@ -284,7 +285,7 @@ def restock_produto(
         produto_id: int,
         restock_data: schemas.RestockCreate,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)  # ← Apenas ADMIN para reabastecer
+        current_user: SystemUser = Depends(get_current_user)  # ← Apenas ADMIN para reabastecer
 ):
     """Reabastece o estoque de um produto"""
     produto_repo = ProdutoRepository(db)
@@ -432,7 +433,7 @@ def get_produtos_summary(
 
 @router.get("/template/download")
 def download_product_template(
-        current_user: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_user)
 ):
     """Gera e retorna o template Excel para importação de produtos"""
     wb = openpyxl.Workbook()
@@ -449,13 +450,20 @@ def download_product_template(
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center")
 
-    # Exemplo de linha
-    ws.append(["Coca-Cola", 5.00, 100, 10])
-
     ws.column_dimensions["A"].width = 30
     ws.column_dimensions["B"].width = 12
     ws.column_dimensions["C"].width = 12
     ws.column_dimensions["D"].width = 18
+
+    add_instructions_sheet(
+        wb,
+        [
+            "Preencha os produtos na aba Produtos, a partir da linha 2.",
+            "nome e valor são obrigatórios. estoque e estoque_minimo são números inteiros.",
+        ],
+        headers,
+        [["Coca-Cola", 5.00, 100, 10]],
+    )
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -470,7 +478,7 @@ def download_product_template(
 
 @router.get("/restock/template/download")
 def download_restock_template(
-        current_user: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_user)
 ):
     """Gera e retorna o template Excel para importação de reabastecimento em massa"""
     wb = openpyxl.Workbook()
@@ -487,10 +495,18 @@ def download_restock_template(
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center")
 
-    ws.append(["Coca-Cola", 50])
-
     ws.column_dimensions["A"].width = 30
     ws.column_dimensions["B"].width = 15
+
+    add_instructions_sheet(
+        wb,
+        [
+            "Preencha na aba Reabastecimento, a partir da linha 2.",
+            "nome_produto: igual ao cadastrado no sistema. quantidade: unidades que estão entrando.",
+        ],
+        headers,
+        [["Coca-Cola", 50]],
+    )
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -507,7 +523,7 @@ def download_restock_template(
 def import_products_from_excel(
         file: UploadFile = File(...),
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_user)
 ):
     """Importa produtos em massa a partir de um arquivo Excel"""
     if not file.filename.endswith((".xlsx", ".xls")):
@@ -519,7 +535,7 @@ def import_products_from_excel(
     except Exception:
         raise HTTPException(status_code=400, detail="Arquivo Excel inválido ou corrompido")
 
-    ws = wb.active
+    ws = pick_data_sheet(wb, "Produtos")
     rows = list(ws.iter_rows(min_row=2, values_only=True))
 
     produto_repo = ProdutoRepository(db)
@@ -611,7 +627,7 @@ def import_products_from_excel(
 def import_restock_from_excel(
         file: UploadFile = File(...),
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_user)
 ):
     """Importa reabastecimento em massa a partir de um arquivo Excel"""
     if not file.filename.endswith((".xlsx", ".xls")):
@@ -623,7 +639,7 @@ def import_restock_from_excel(
     except Exception:
         raise HTTPException(status_code=400, detail="Arquivo Excel inválido ou corrompido")
 
-    ws = wb.active
+    ws = pick_data_sheet(wb, "Reabastecimento")
     rows = list(ws.iter_rows(min_row=2, values_only=True))
 
     produto_repo = ProdutoRepository(db)
@@ -687,7 +703,7 @@ def list_import_batches(
         limit: int = 50,
         include_rolled_back: bool = True,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_user)
 ):
     """Lista todos os batches de importação de produtos"""
     query = db.query(ProductImportBatch)
@@ -726,7 +742,7 @@ def list_import_batches(
 def get_import_batch_details(
         batch_id: int,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_user)
 ):
     """Retorna detalhes de um batch de importação incluindo produtos"""
     batch = db.query(ProductImportBatch).filter(ProductImportBatch.id == batch_id).first()
@@ -764,7 +780,7 @@ def get_import_batch_details(
 def rollback_import_batch(
         batch_id: int,
         db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_active_admin)
+        current_user: SystemUser = Depends(get_current_user)
 ):
     """Reverte um batch de importação deletando os produtos importados"""
     batch = db.query(ProductImportBatch).filter(ProductImportBatch.id == batch_id).first()
@@ -796,7 +812,7 @@ def rollback_import_batch(
     db.query(ProductImportBatchItem).filter(ProductImportBatchItem.batch_id == batch_id).delete()
 
     batch.status = "rolled_back"
-    batch.rolled_back_at = datetime.now(timezone.utc)
+    batch.rolled_back_at = datetime.now()
     batch.rolled_back_by_id = current_user.id
 
     db.commit()

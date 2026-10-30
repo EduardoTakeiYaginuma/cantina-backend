@@ -14,6 +14,9 @@ from .endpoints import (
     guest_sales_router,
     reports_router,
     analytics_router,
+    event_config_router,
+    exports_router,
+    settings_router,
 )
 
 # Router principal da v1
@@ -30,4 +33,7 @@ api_router.include_router(audit_router, tags=["audit"])
 api_router.include_router(guest_sales_router, tags=["guest-sales"])
 api_router.include_router(reports_router, tags=["reports"])
 api_router.include_router(analytics_router, tags=["analytics"])
+api_router.include_router(event_config_router, tags=["event-config"])
+api_router.include_router(exports_router, tags=["exports"])
+api_router.include_router(settings_router, tags=["settings"])
 __all__ = ["api_router"]

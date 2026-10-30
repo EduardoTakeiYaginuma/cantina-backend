@@ -40,6 +40,7 @@ class SaleCreate(BaseModel):
     """Schema para criar venda"""
     customer_id: int
     items: List[SaleItemCreate] = Field(...)
+    observacao: Optional[str] = Field(None, max_length=500, description="Observação livre da venda")
 
 
 class SaleCancellation(BaseModel):
@@ -62,6 +63,9 @@ class SaleResponse(BaseModel):
     cancelled_by_id: Optional[int] = None
     cancellation_reason: Optional[str] = None
 
+    # Observação livre
+    observacao: Optional[str] = None
+
     # Campos extras
     customer_nome: Optional[str] = None
     customer_nickname: Optional[str] = None
@@ -78,8 +82,10 @@ class GuestSaleItemCreate(BaseModel):
 
 
 class GuestSaleCreate(BaseModel):
-    guest_name: Optional[str] = None
+    guest_name: Optional[str] = Field(None, max_length=255)
     items: List[GuestSaleItemCreate] = Field(...)
+    valor_pago: Optional[float] = Field(None, ge=0, description="Valor entregue pelo cliente")
+    observacao: Optional[str] = Field(None, max_length=500, description="Observação livre da venda")
 
 
 class GuestSaleCancellation(BaseModel):
@@ -110,6 +116,9 @@ class GuestSaleResponse(BaseModel):
     cancelled_at: Optional[datetime] = None
     cancelled_by_id: Optional[int] = None
     cancellation_reason: Optional[str] = None
+    valor_pago: Optional[float] = None
+    troco: Optional[float] = None
+    observacao: Optional[str] = None
     items: List[GuestSaleItemResponse]
 
     class Config:

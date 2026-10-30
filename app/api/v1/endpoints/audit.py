@@ -12,7 +12,7 @@ from io import StringIO
 import csv
 
 from app import schemas
-from app.core.dependencies import get_db, get_current_active_admin, get_current_user
+from app.core.dependencies import get_db, get_current_active_admin, get_current_user, restrict_to_own_logs, is_admin
 from app.models import SystemUser, Customers, Produto, Sale, SaleItem
 from app.services.audit import AuditService
 
@@ -36,7 +36,7 @@ def search_audit_logs(
         limit: int = Query(100, description="Número máximo de registros por página", ge=1, le=500),
         offset: int = Query(0, description="Offset para paginação", ge=0),
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_admin: SystemUser = Depends(get_current_user)
 ):
     """
     🔍 **Busca avançada de logs de auditoria com múltiplos filtros**
@@ -60,6 +60,8 @@ def search_audit_logs(
 
     **Retorna:** Lista paginada de logs com informações consolidadas
     """
+    # Operador: só as próprias ações. Admin: logs do sistema inteiro.
+    user_id = restrict_to_own_logs(current_admin, user_id)
     audit = AuditService(db)
 
     logs, total = audit.search_logs_filtered(
@@ -109,7 +111,7 @@ def get_customer_audit_history(
         customer_id: int,
         limit: int = Query(50, description="Número máximo de registros"),
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_admin: SystemUser = Depends(get_current_user)
 ):
     """
     Retorna o histórico de auditoria de um cliente específico.
@@ -125,7 +127,7 @@ def get_product_audit_history(
         produto_id: int,
         limit: int = Query(50, description="Número máximo de registros"),
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_admin: SystemUser = Depends(get_current_user)
 ):
     """
     Retorna o histórico de auditoria de um produto específico.
@@ -140,7 +142,7 @@ def get_product_audit_history(
 def get_product_price_changes(
         produto_id: int,
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_admin: SystemUser = Depends(get_current_user)
 ):
     """
     Retorna apenas o histórico de mudanças de preço de um produto.
@@ -233,12 +235,13 @@ def get_user_activity_report(
         start_date: Optional[datetime] = Query(None, description="Data inicial (ISO format)"),
         end_date: Optional[datetime] = Query(None, description="Data final (ISO format)"),
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_admin: SystemUser = Depends(get_current_user)
 ):
     """
     Retorna todas as ações realizadas por um usuário específico.
     Útil para rastreabilidade e auditoria de ações de funcionários.
     """
+    user_id = restrict_to_own_logs(current_admin, user_id)
     audit = AuditService(db)
     logs = audit.get_user_activity(user_id, start_date, end_date)
 
@@ -313,7 +316,7 @@ def export_audit_logs(
         search: Optional[str] = Query(None, description="Busca por texto na descrição"),
         limit: int = Query(10000, description="Máximo de registros (default: 10000)", ge=1, le=50000),
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_admin: SystemUser = Depends(get_current_user)
 ):
     """
     📥 **Exportar logs de auditoria para CSV**
@@ -345,6 +348,8 @@ def export_audit_logs(
     **Retorna:**
     Arquivo CSV para download direto no navegador
     """
+    # Operador: só as próprias ações. Admin: logs do sistema inteiro.
+    user_id = restrict_to_own_logs(current_admin, user_id)
     from fastapi.responses import StreamingResponse
     import io
 
@@ -386,7 +391,7 @@ def export_audit_logs_json(
         search: Optional[str] = Query(None, description="Busca por texto"),
         limit: int = Query(10000, ge=1, le=50000),
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_admin: SystemUser = Depends(get_current_user)
 ):
     """
     📥 **Exportar logs de auditoria para JSON**
@@ -415,6 +420,8 @@ def export_audit_logs_json(
     - Backup de dados
     - Processamento automatizado
     """
+    # Operador: só as próprias ações. Admin: logs do sistema inteiro.
+    user_id = restrict_to_own_logs(current_admin, user_id)
     from fastapi.responses import StreamingResponse
     import io
 
@@ -454,7 +461,7 @@ def export_audit_logs_excel(
         search: Optional[str] = Query(None, description="Busca por texto"),
         limit: int = Query(10000, ge=1, le=50000),
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_admin: SystemUser = Depends(get_current_user)
 ):
     """
     📥 **Exportar logs de auditoria para Excel (XLSX)**
@@ -481,6 +488,8 @@ def export_audit_logs_excel(
     - Apresentações para diretoria
     - Análise em Excel com gráficos
     """
+    # Operador: só as próprias ações. Admin: logs do sistema inteiro.
+    user_id = restrict_to_own_logs(current_admin, user_id)
     from fastapi.responses import StreamingResponse
     import io
 
@@ -526,7 +535,7 @@ def export_audit_logs_pdf(
         search: Optional[str] = Query(None, description="Busca por texto"),
         limit: int = Query(1000, ge=1, le=5000, description="Máximo: 5000 (PDF tem limite menor)"),
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_admin: SystemUser = Depends(get_current_user)
 ):
     """
     📥 **Exportar logs de auditoria para PDF**
@@ -557,6 +566,8 @@ def export_audit_logs_pdf(
     - Relatórios para conformidade (LGPD, ISO)
     - Arquivamento de longo prazo
     """
+    # Operador: só as próprias ações. Admin: logs do sistema inteiro.
+    user_id = restrict_to_own_logs(current_admin, user_id)
     from fastapi.responses import StreamingResponse
     import io
 
@@ -618,7 +629,7 @@ def get_sales_audit_report(
         order_by: str = Query("created_at_desc", description="Ordenação: created_at_desc, created_at_asc, amount_desc, amount_asc"),
 
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_admin: SystemUser = Depends(get_current_user)
 ):
     """
     📊 **Relatório de auditoria de vendas com filtros avançados**
@@ -777,7 +788,7 @@ def export_sales_audit_report(
         detail_level: str = Query("summary", description="Nível de detalhe: summary (resumo) ou detailed (com itens)"),
 
         db: Session = Depends(get_db),
-        current_admin: SystemUser = Depends(get_current_active_admin)
+        current_admin: SystemUser = Depends(get_current_user)
 ):
     """
     📥 **Exportar relatório de auditoria de vendas**
@@ -847,8 +858,16 @@ def export_sales_audit_report(
     elif order_by == "amount_asc":
         query = query.order_by(Sale.total_amount.asc())
 
-    # Buscar todas as vendas (sem paginação para exportação)
-    sales = query.all()
+    # Buscar todas as vendas (sem paginação para exportação), incluindo as avulsas
+    from app.services.combined_sales import query_guest_sales, sort_sales
+    guest_sales = query_guest_sales(
+        db,
+        date_from=date_from, date_to=date_to, customer_id=customer_id,
+        produto_id=produto_id, created_by_id=created_by_id,
+        min_amount=min_amount, max_amount=max_amount, search=search,
+        include_cancelled=True,  # mesmo comportamento das vendas normais nesta exportação
+    )
+    sales = sort_sales(query.all() + guest_sales, order_by)
 
     # Gerar nome do arquivo
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
