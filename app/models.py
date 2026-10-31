@@ -137,6 +137,11 @@ class Produto(Base):
     estoque_minimo = Column(Integer, default=10)
     is_active = Column(Boolean, default=True)
 
+    # Sabores/variações: produtos do mesmo grupo (ex.: grupo "KitKat", variante "Morango").
+    # Cada variante é um produto com estoque próprio; o nome fica "KitKat - Morango".
+    grupo_id = Column(Integer, ForeignKey("produto_grupos.id"), nullable=True, index=True)
+    variante = Column(String(100), nullable=True)
+
     # Campos de auditoria
     created_at = Column(DateTime, default=lambda: datetime.now())
     created_by_id = Column(Integer, ForeignKey("system_users.id"))
@@ -144,10 +149,27 @@ class Produto(Base):
     updated_by_id = Column(Integer, ForeignKey("system_users.id"))
 
     # Relationships
+    grupo = relationship("ProdutoGrupo", back_populates="produtos")
     sale_items = relationship("SaleItem", back_populates="produto")
     restocks = relationship("Restock", back_populates="produto")
     created_by = relationship("SystemUser", foreign_keys=lambda: [Produto.created_by_id], backref="produtos_created")
     updated_by = relationship("SystemUser", foreign_keys=lambda: [Produto.updated_by_id], backref="produtos_updated")
+
+    @property
+    def grupo_nome(self):
+        return self.grupo.nome if self.grupo else None
+
+
+class ProdutoGrupo(Base):
+    """Produto com sabores/variações (ex.: KitKat). As variantes são os produtos vendidos."""
+    __tablename__ = "produto_grupos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nome = Column(String(255), nullable=False, unique=True)
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now())
+
+    produtos = relationship("Produto", back_populates="grupo")
 
 
 # ============================================

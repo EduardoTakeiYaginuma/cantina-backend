@@ -17,6 +17,7 @@ from .endpoints import (
     event_config_router,
     exports_router,
     settings_router,
+    produto_grupos_router,
 )
 
 # Router principal da v1
@@ -36,4 +37,5 @@ api_router.include_router(analytics_router, tags=["analytics"])
 api_router.include_router(event_config_router, tags=["event-config"])
 api_router.include_router(exports_router, tags=["exports"])
 api_router.include_router(settings_router, tags=["settings"])
+api_router.include_router(produto_grupos_router, tags=["produto-grupos"])
 __all__ = ["api_router"]

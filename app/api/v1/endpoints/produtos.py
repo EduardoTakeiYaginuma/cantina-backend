@@ -129,6 +129,14 @@ def update_produto(
     if produto is None:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
 
+    # Sabor de um grupo: o nome completo é sempre "<grupo> - <sabor>"
+    if produto.grupo_id:
+        variante = (produto_update.variante or produto.variante or "").strip()
+        produto_update.nome = f"{produto.grupo.nome} - {variante}" if variante else produto.nome
+        produto_update.variante = variante or produto.variante
+    else:
+        produto_update.variante = None
+
     # Verificar se novo nome já existe
     if produto_update.nome and produto_update.nome != produto.nome:
         if produto_repo.nome_exists(produto_update.nome, exclude_id=produto_id):
@@ -138,7 +146,10 @@ def update_produto(
             )
 
     # 🆕 AUDITORIA: Detectar mudanças
-    update_data = produto_update.model_dump(exclude_unset=True)
+    update_data = {k: v for k, v in produto_update.model_dump(exclude_unset=True).items()
+                   if not (k == "variante" and v is None)}
+    if produto.grupo_id and produto_update.nome:
+        update_data["nome"] = produto_update.nome
     old_values, new_values = get_changed_fields(produto, update_data)
 
     # Atualizar campos

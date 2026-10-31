@@ -365,15 +365,21 @@ def get_sales_report(
         all_sales = sort_sales(query.all() + guest_sales, order_by)
         total_records = len(all_sales)
         sales = all_sales[skip:skip + limit]
+        active_amounts = [float(s.total_amount) for s in all_sales if not s.is_cancelled]
     else:
         # Contar total antes da paginação
         total_records = query.count()
 
         # Aplicar paginação
         sales = query.offset(skip).limit(limit).all()
+        active_amounts = [
+            float(row[0]) for row in
+            query.filter(Sale.is_cancelled == False).order_by(None).with_entities(Sale.total_amount).all()
+        ]
 
-    # Calcular totalizadores APENAS das vendas ativas retornadas
-    total_amount_all = sum(float(sale.total_amount) for sale in sales)
+    # Totalizadores de TODAS as vendas ativas do filtro (não só da página retornada)
+    total_amount_all = sum(active_amounts)
+    active_count = len(active_amounts)
 
     # Formatar resposta
     sales_data = []
@@ -433,7 +439,8 @@ def get_sales_report(
         },
         "summary": {
             "total_sales_amount": float(total_amount_all),
-            "average_ticket": float(total_amount_all / len(sales_data)) if sales_data else 0
+            "active_count": active_count,
+            "average_ticket": float(total_amount_all / active_count) if active_count else 0
         },
         "sales": sales_data
     }

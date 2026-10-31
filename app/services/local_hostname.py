@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_HOSTNAME = "cantina"
 FRONTEND_PORT = int(os.getenv("FRONTEND_PORT", "8080"))
+# No Docker o anúncio usaria o IP interno do container: desligue com LOCAL_HOSTNAME_ENABLED=false
+ENABLED = os.getenv("LOCAL_HOSTNAME_ENABLED", "true").strip().lower() not in ("0", "false", "no", "nao", "não")
 SETTING_KEY = "network_hostname"
 
 _HOSTNAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
@@ -82,6 +84,10 @@ class LocalHostnameAnnouncer:
         await self.stop()
         self.hostname = hostname
         self.error = None
+        if not ENABLED:
+            self.addresses = []
+            self.error = "Nome .local desativado neste servidor (LOCAL_HOSTNAME_ENABLED=false). Use o endereço pelo IP."
+            return
         # Anuncia só o IP da rede principal; adaptadores virtuais (WSL, VPN) confundem os aparelhos
         preferred = preferred_ipv4()
         addresses = [preferred] if preferred else local_ipv4_addresses()
