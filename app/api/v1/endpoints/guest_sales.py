@@ -1,6 +1,6 @@
 # endpoints/guest_sales.py
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func, and_
 from typing import List, Optional
 from datetime import datetime, timezone, date
@@ -155,7 +155,10 @@ def list_guest_sales(
     if filters:
         query = query.filter(and_(*filters))
 
-    sales = query.order_by(GuestSale.created_at.desc()).offset(skip).limit(limit).all()
+    sales = query.options(
+        selectinload(GuestSale.created_by),
+        selectinload(GuestSale.items).selectinload(GuestSaleItem.produto),
+    ).order_by(GuestSale.created_at.desc()).offset(skip).limit(limit).all()
 
     result = []
     for sale in sales:

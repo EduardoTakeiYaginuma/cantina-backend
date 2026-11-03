@@ -1,8 +1,10 @@
 # endpoints/settings.py
 """
-Configurações do sistema. Por enquanto: o nome de acesso na rede local
-(ex.: http://cantina.local:8080).
+Configurações do sistema: o nome de acesso na rede local (ex.: http://cantina.local:8080)
+e a personalização visual (logo e cores principais).
 """
+import json
+import re
 from datetime import datetime
 from typing import List, Optional
 
@@ -11,7 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from database import SessionLocal, get_db
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, get_current_active_admin
 from app.models import AppSetting, SystemUser
 from app.services.local_hostname import (
     DEFAULT_HOSTNAME, FRONTEND_PORT, SETTING_KEY, announcer,
@@ -99,3 +101,69 @@ async def update_network_settings(
 
     await announcer.start(hostname)
     return _response(hostname)
+
+
+# ============================================
+# Personalização visual (logo e cores)
+# ============================================
+
+BRANDING_KEY = "branding"
+# Logo guardada como data URL (PNG/JPEG/WebP/SVG). ~700 KB de imagem viram ~1 MB de texto.
+MAX_LOGO_CHARS = 1_000_000
+HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
+LOGO_PREFIX = re.compile(r"^data:image/(png|jpeg|webp|svg\+xml);base64,")
+
+
+class BrandingSettings(BaseModel):
+    """Campos vazios (None) = usar o padrão do sistema."""
+    logo: Optional[str] = None
+    # Ícone da aba do navegador (favicon)
+    favicon: Optional[str] = None
+    primary_color: Optional[str] = None
+    secondary_color: Optional[str] = None
+
+
+def _read_branding(db: Session) -> BrandingSettings:
+    row = db.query(AppSetting).filter(AppSetting.key == BRANDING_KEY).first()
+    if not row or not row.value:
+        return BrandingSettings()
+    try:
+        return BrandingSettings(**json.loads(row.value))
+    except (ValueError, TypeError):
+        return BrandingSettings()
+
+
+@router.get("/branding", response_model=BrandingSettings)
+def get_branding(db: Session = Depends(get_db)):
+    """Público: a tela de login também usa a logo e as cores."""
+    return _read_branding(db)
+
+
+@router.put("/branding", response_model=BrandingSettings)
+def update_branding(
+        data: BrandingSettings,
+        db: Session = Depends(get_db),
+        current_admin: SystemUser = Depends(get_current_active_admin),
+):
+    for field in ("primary_color", "secondary_color"):
+        value = getattr(data, field)
+        if value is not None and not HEX_COLOR.match(value):
+            raise HTTPException(status_code=400, detail="Cor inválida. Use o formato #RRGGBB.")
+    for field, label in (("logo", "A logo"), ("favicon", "O ícone da aba")):
+        value = getattr(data, field)
+        if value is None:
+            continue
+        if not LOGO_PREFIX.match(value):
+            raise HTTPException(status_code=400, detail=f"{label} precisa ser uma imagem PNG, JPG, WebP ou SVG.")
+        if len(value) > MAX_LOGO_CHARS:
+            raise HTTPException(status_code=400, detail=f"{label}: imagem muito grande. Use uma de até 700 KB.")
+
+    row = db.query(AppSetting).filter(AppSetting.key == BRANDING_KEY).first()
+    if row is None:
+        row = AppSetting(key=BRANDING_KEY)
+        db.add(row)
+    payload = data.model_dump() if hasattr(data, "model_dump") else data.dict()
+    row.value = json.dumps(payload)
+    row.updated_at = datetime.now()
+    db.commit()
+    return data

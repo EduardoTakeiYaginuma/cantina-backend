@@ -334,6 +334,53 @@ def restock_produto(
     }
 
 
+@router.get("/restock/history")
+def get_all_restocks_history(
+        skip: int = Query(0, ge=0),
+        limit: int = Query(100, ge=1, le=1000),
+        produto_id: Optional[int] = Query(None),
+        created_by_id: Optional[int] = Query(None),
+        date_from: Optional[str] = Query(None, description="AAAA-MM-DD"),
+        date_to: Optional[str] = Query(None, description="AAAA-MM-DD"),
+        order_by: str = Query("created_at_desc", description="created_at_desc ou created_at_asc"),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """Histórico de reabastecimentos de todos os produtos (tela de Reabastecimento).
+
+    Precisa vir antes de "/{produto_id}/history", senão "restock" seria lido como produto_id.
+    """
+    query = db.query(Restock)
+    if produto_id is not None:
+        query = query.filter(Restock.produto_id == produto_id)
+    if created_by_id is not None:
+        query = query.filter(Restock.created_by_id == created_by_id)
+    if date_from:
+        query = query.filter(func.date(Restock.created_at) >= date_from)
+    if date_to:
+        query = query.filter(func.date(Restock.created_at) <= date_to)
+
+    total = query.count()
+    order = Restock.created_at.asc() if order_by == "created_at_asc" else Restock.created_at.desc()
+    restocks = query.order_by(order, Restock.id.desc()).offset(skip).limit(limit).all()
+
+    return {
+        "total": total,
+        "restocks": [
+            {
+                "id": r.id,
+                "produto_id": r.produto_id,
+                "produto_nome": r.produto.nome if r.produto else None,
+                "quantity": r.quantity,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "created_by_id": r.created_by_id,
+                "created_by_username": r.created_by.username if r.created_by else None,
+            }
+            for r in restocks
+        ],
+    }
+
+
 @router.get("/{produto_id}/restock-history", response_model=schemas.RestockHistoryResponse)
 def get_restock_history(
         produto_id: int,

@@ -50,6 +50,7 @@ class CustomerResponse(CustomerBase):
     tipo: CustomerTipo
     is_active: bool
     created_at: datetime
+    foto: Optional[str] = None
 
     class Config:
         from_attributes = True

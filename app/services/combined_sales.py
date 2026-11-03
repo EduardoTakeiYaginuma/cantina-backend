@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from typing import List, Optional
 
 from sqlalchemy import and_, func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models import GuestSale, GuestSaleItem
 
@@ -66,7 +66,12 @@ def query_guest_sales(
     if customer_id:
         return []
 
-    query = db.query(GuestSale)
+    # O adaptador acessa operador e itens de cada venda: carrega tudo de uma vez
+    query = db.query(GuestSale).options(
+        selectinload(GuestSale.created_by),
+        selectinload(GuestSale.cancelled_by),
+        selectinload(GuestSale.items).selectinload(GuestSaleItem.produto),
+    )
     if not include_cancelled:
         query = query.filter(GuestSale.is_cancelled == False)  # noqa: E712
 

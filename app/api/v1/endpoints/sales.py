@@ -3,7 +3,7 @@
 Endpoints relacionados a vendas (Sales).
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func, and_, or_
 from typing import List, Optional
 from datetime import date, datetime
@@ -14,7 +14,7 @@ from app.models import SystemUser, Sale, SaleItem, Customers, Produto
 from app import schemas
 from app.services.audit import AuditService
 from app.services.combined_sales import query_guest_sales, sort_sales
-from app.models import GuestSale
+from app.models import GuestSale, GuestSaleItem
 
 router = APIRouter(prefix="/sales", tags=["sales"])
 
@@ -195,6 +195,93 @@ def create_sale(
         raise HTTPException(status_code=500, detail=f"Erro ao criar venda: {str(e)}")
 
 
+# Carrega cliente, operadores e itens (com produto) em poucas consultas,
+# em vez de uma consulta por venda (o que deixava as listas lentas com milhares de vendas).
+SALE_EAGER = (
+    selectinload(Sale.customer),
+    selectinload(Sale.created_by),
+    selectinload(Sale.cancelled_by),
+    selectinload(Sale.items).selectinload(SaleItem.produto),
+)
+GUEST_SALE_EAGER = (
+    selectinload(GuestSale.created_by),
+    selectinload(GuestSale.cancelled_by),
+    selectinload(GuestSale.items).selectinload(GuestSaleItem.produto),
+)
+
+
+def _history_item(kind: str, sale) -> dict:
+    """Formato único (venda normal ou avulsa) usado pela tela de Vendas."""
+    is_guest = kind == "guest"
+    return {
+        "id": sale.id,
+        "kind": kind,
+        "customer_nome": (sale.guest_name or "Cliente Avulso") if is_guest else sale.customer.nome,
+        "customer_nickname": "Venda avulsa" if is_guest else sale.customer.nickname,
+        "customer_foto": None if is_guest else sale.customer.foto,
+        "total_amount": float(sale.total_amount),
+        "created_at": sale.created_at,
+        "created_by_username": sale.created_by.username if sale.created_by else None,
+        "is_cancelled": sale.is_cancelled,
+        "observacao": sale.observacao,
+        "valor_pago": getattr(sale, "valor_pago", None) if is_guest else None,
+        "troco": getattr(sale, "troco", None) if is_guest else None,
+        "items": [
+            {
+                "id": item.id,
+                "produto_id": item.produto_id,
+                "produto_nome": item.produto.nome if item.produto else "",
+                "quantity": item.quantity,
+                "unit_price": float(item.unit_price),
+                "total_price": float(item.total_price),
+            }
+            for item in sale.items
+        ],
+    }
+
+
+@router.get("/history")
+def get_sales_history(
+        skip: int = Query(0, ge=0),
+        limit: int = Query(100, ge=1, le=500),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """Vendas ativas (normais + avulsas), das mais recentes para as mais antigas, paginadas."""
+    window = skip + limit
+    sales = db.query(Sale).options(*SALE_EAGER) \
+        .filter(Sale.is_cancelled == False) \
+        .order_by(Sale.created_at.desc(), Sale.id.desc()).limit(window).all()  # noqa: E712
+    guests = db.query(GuestSale).options(*GUEST_SALE_EAGER) \
+        .filter(GuestSale.is_cancelled == False) \
+        .order_by(GuestSale.created_at.desc(), GuestSale.id.desc()).limit(window).all()  # noqa: E712
+
+    merged = [("customer", s) for s in sales] + [("guest", g) for g in guests]
+    merged.sort(key=lambda pair: pair[1].created_at, reverse=True)
+    return [_history_item(kind, sale) for kind, sale in merged[skip:skip + limit]]
+
+
+@router.get("/history/summary")
+def get_sales_history_summary(
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """Totais calculados pelo banco (COUNT/SUM), sem carregar as vendas."""
+    def totals(model):
+        count, amount = db.query(func.count(model.id), func.coalesce(func.sum(model.total_amount), 0)) \
+            .filter(model.is_cancelled == False).one()  # noqa: E712
+        cancelled = db.query(func.count(model.id)).filter(model.is_cancelled == True).scalar()  # noqa: E712
+        return int(count), float(amount), int(cancelled or 0)
+
+    s_count, s_amount, s_cancelled = totals(Sale)
+    g_count, g_amount, g_cancelled = totals(GuestSale)
+    return {
+        "active_count": s_count + g_count,
+        "active_amount": round(s_amount + g_amount, 2),
+        "cancelled_count": s_cancelled + g_cancelled,
+    }
+
+
 @router.get("/", response_model=List[schemas.SaleResponse])
 def list_sales(
         skip: int = Query(0, description="Número de registros para pular"),
@@ -205,7 +292,7 @@ def list_sales(
         current_user: SystemUser = Depends(get_current_user)
 ):
     """Lista todas as vendas com filtros opcionais"""
-    query = db.query(Sale)
+    query = db.query(Sale).options(*SALE_EAGER)
 
     # Filtrar vendas canceladas
     if not include_cancelled:
@@ -299,7 +386,7 @@ def get_sales_report(
     Use include_cancelled=true para incluir vendas canceladas.
     """
     # Montar query base
-    query = db.query(Sale).join(Customers)
+    query = db.query(Sale).join(Customers).options(*SALE_EAGER)
 
     # Filtrar vendas canceladas (opcional)
     if not include_cancelled:

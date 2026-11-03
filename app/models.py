@@ -99,6 +99,9 @@ class Customers(Base):
     # Semana do evento em que o cliente participa (1 = evento todo; None = sem semana definida)
     semana = Column(Integer, nullable=True, index=True)
 
+    # Foto do cliente (data URL de imagem pequena); None = mostra as iniciais
+    foto = Column(Text, nullable=True)
+
     # Campos de auditoria
     created_at = Column(DateTime, default=lambda: datetime.now())
     created_by_id = Column(Integer, ForeignKey("system_users.id"))
