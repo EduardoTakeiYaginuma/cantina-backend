@@ -1,7 +1,7 @@
 # endpoints/relatorios_evento.py
 """
 Relatórios por evento (balanço do evento e extrato por cliente), do evento ativo ou de um anterior.
-Somente administradores.
+Operadores podem ver tudo, exceto a atividade dos usuários (somente administradores).
 """
 from datetime import datetime
 from io import BytesIO
@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_active_admin
+from app.core.dependencies import get_current_active_admin, get_current_user
 from app.core.event_scope import scoped_event_id
 from app.models import EventConfig, SystemUser
 from app.services import relatorios_evento as svc
@@ -40,20 +40,20 @@ def _file(content: bytes, media: str, filename: str) -> StreamingResponse:
 
 
 @router.get("/eventos")
-def listar_eventos(db: Session = Depends(get_db), _: SystemUser = Depends(get_current_active_admin)):
+def listar_eventos(db: Session = Depends(get_db), _: SystemUser = Depends(get_current_user)):
     return svc.listar_eventos(db)
 
 
 @router.get("/evento/resumo")
 def resumo_evento(evento_id: Optional[int] = Query(None), db: Session = Depends(get_db),
-                  _: SystemUser = Depends(get_current_active_admin)):
+                  _: SystemUser = Depends(get_current_user)):
     ev = _evento(db, evento_id)
     return svc.montar_resumo(db, ev.id, ev)
 
 
 @router.get("/evento/pdf")
 def evento_pdf(evento_id: Optional[int] = Query(None), db: Session = Depends(get_db),
-               _: SystemUser = Depends(get_current_active_admin)):
+               _: SystemUser = Depends(get_current_user)):
     ev = _evento(db, evento_id)
     content = svc.pdf_evento(svc.montar_resumo(db, ev.id, ev))
     return _file(content, PDF, f"balanco_{svc.slug(ev.event_name)}.pdf")
@@ -61,7 +61,7 @@ def evento_pdf(evento_id: Optional[int] = Query(None), db: Session = Depends(get
 
 @router.get("/evento/excel")
 def evento_excel(evento_id: Optional[int] = Query(None), db: Session = Depends(get_db),
-                 _: SystemUser = Depends(get_current_active_admin)):
+                 _: SystemUser = Depends(get_current_user)):
     ev = _evento(db, evento_id)
     res = svc.montar_resumo(db, ev.id, ev)
     content = svc.excel_evento(res, svc.listar_clientes(db, ev.id))
@@ -70,14 +70,14 @@ def evento_excel(evento_id: Optional[int] = Query(None), db: Session = Depends(g
 
 @router.get("/clientes")
 def clientes(evento_id: Optional[int] = Query(None), db: Session = Depends(get_db),
-             _: SystemUser = Depends(get_current_active_admin)):
+             _: SystemUser = Depends(get_current_user)):
     ev = _evento(db, evento_id)
     return svc.listar_clientes(db, ev.id)
 
 
 @router.get("/clientes/pdf")
 def clientes_pdf(evento_id: Optional[int] = Query(None), ids: Optional[str] = Query(None),
-                 db: Session = Depends(get_db), _: SystemUser = Depends(get_current_active_admin)):
+                 db: Session = Depends(get_db), _: SystemUser = Depends(get_current_user)):
     ev = _evento(db, evento_id)
     id_list = None
     if ids:
@@ -112,7 +112,7 @@ def _filtros(data_ini: Optional[str], data_fim: Optional[str], tipos: Optional[s
 def cliente_extrato(customer_id: int, evento_id: Optional[int] = Query(None),
                     data_ini: Optional[str] = Query(None), data_fim: Optional[str] = Query(None),
                     tipos: Optional[str] = Query(None), incluir_itens: bool = Query(True),
-                    db: Session = Depends(get_db), _: SystemUser = Depends(get_current_active_admin)):
+                    db: Session = Depends(get_db), _: SystemUser = Depends(get_current_user)):
     ev = _evento(db, evento_id)
     ext = svc.montar_extratos(db, ev.id, [customer_id],
                               **_filtros(data_ini, data_fim, tipos, incluir_itens)).get(customer_id)
@@ -125,7 +125,7 @@ def cliente_extrato(customer_id: int, evento_id: Optional[int] = Query(None),
 def cliente_pdf(customer_id: int, evento_id: Optional[int] = Query(None),
                 data_ini: Optional[str] = Query(None), data_fim: Optional[str] = Query(None),
                 tipos: Optional[str] = Query(None), incluir_itens: bool = Query(True),
-                db: Session = Depends(get_db), _: SystemUser = Depends(get_current_active_admin)):
+                db: Session = Depends(get_db), _: SystemUser = Depends(get_current_user)):
     ev = _evento(db, evento_id)
     ext = svc.montar_extratos(db, ev.id, [customer_id],
                               **_filtros(data_ini, data_fim, tipos, incluir_itens)).get(customer_id)
@@ -137,14 +137,14 @@ def cliente_pdf(customer_id: int, evento_id: Optional[int] = Query(None),
 
 @router.get("/produtos")
 def produtos(evento_id: Optional[int] = Query(None), db: Session = Depends(get_db),
-             _: SystemUser = Depends(get_current_active_admin)):
+             _: SystemUser = Depends(get_current_user)):
     ev = _evento(db, evento_id)
     return svc.listar_produtos(db, ev.id)
 
 
 @router.get("/produto/{produto_id}")
 def produto_detalhe(produto_id: int, evento_id: Optional[int] = Query(None), db: Session = Depends(get_db),
-                    _: SystemUser = Depends(get_current_active_admin)):
+                    _: SystemUser = Depends(get_current_user)):
     ev = _evento(db, evento_id)
     res = svc.montar_produto(db, ev.id, produto_id)
     if res is None:
@@ -154,7 +154,7 @@ def produto_detalhe(produto_id: int, evento_id: Optional[int] = Query(None), db:
 
 @router.get("/produto/{produto_id}/pdf")
 def produto_pdf(produto_id: int, evento_id: Optional[int] = Query(None), db: Session = Depends(get_db),
-                _: SystemUser = Depends(get_current_active_admin)):
+                _: SystemUser = Depends(get_current_user)):
     ev = _evento(db, evento_id)
     res = svc.montar_produto(db, ev.id, produto_id)
     if res is None:
