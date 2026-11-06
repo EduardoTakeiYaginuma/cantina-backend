@@ -28,6 +28,8 @@ class CustomerCreate(CustomerBase):
     """Schema para criar Customer"""
     saldo: Optional[float] = 0.0
     tipo: Optional[CustomerTipo] = CustomerTipo.ACAMPANTE
+    # Pessoa de outro evento (a mesma pessoa). Vazio = pessoa nova.
+    pessoa_id: Optional[int] = None
 
 
 class CustomerUpdate(BaseModel):
@@ -50,7 +52,10 @@ class CustomerResponse(CustomerBase):
     tipo: CustomerTipo
     is_active: bool
     created_at: datetime
+    pessoa_id: Optional[int] = None
     foto: Optional[str] = None
+    # Equipe, ou qualquer cliente de evento genérico
+    allow_negative_balance: bool = False
 
     class Config:
         from_attributes = True

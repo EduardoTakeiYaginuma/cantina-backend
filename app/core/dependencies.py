@@ -10,7 +10,8 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from database import get_db
-from app.models import SystemUser, UserRole, UserSession
+from app.models import SystemUser, UserRole, UserSession, EventConfig
+from app.core.event_scope import scoped_event_id
 from app.repositories import SystemUserRepository
 from .security import verify_password, verify_token, IDLE_TIMEOUT_MINUTES
 
@@ -30,7 +31,7 @@ def get_user(db: Session, username: str) -> Optional[SystemUser]:
 
 def authenticate_user(db: Session, username: str, password: str) -> Optional[SystemUser]:
     """Autentica usuário verificando senha"""
-    user = get_user(db, username)
+    user = SystemUserRepository(db).get_by_username_any_event(username)
 
     # Não deixa usuários com login incorreto logarem
     if not user:
@@ -52,6 +53,15 @@ def authenticate_user(db: Session, username: str, password: str) -> Optional[Sys
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Inactive user",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Perfil de outro evento: só entra quando o evento dele estiver ativo
+    if user.evento_id is not None and user.evento_id != scoped_event_id(db):
+        event = db.query(EventConfig).filter(EventConfig.id == user.evento_id).first()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(f"Este perfil pertence ao evento \"{event.event_name if event else user.evento_id}\", "
+                    "que não é o evento ativo. Entre com um perfil global (ex.: admin)."),
         )
     return user
 

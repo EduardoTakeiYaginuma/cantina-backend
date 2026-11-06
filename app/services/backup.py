@@ -150,6 +150,13 @@ class BackupManager:
             engine.dispose()
             convert_utc_timestamps_to_local(engine, models.Base.metadata)
 
+            # Backups de antes do isolamento por evento: cria as colunas novas e coloca
+            # os dados sem evento no evento ativo do backup
+            from app.core.schema_migrations import run_migrations, assign_legacy_rows_to_active_event
+            models.Base.metadata.create_all(bind=engine)
+            run_migrations(engine)
+            assign_legacy_rows_to_active_event(engine)
+
             # Clean up decompressed file
             if temp_db_path and temp_db_path.exists():
                 temp_db_path.unlink()
@@ -200,6 +207,11 @@ class BackupManager:
                 else:
                     cursor.execute(f"DELETE FROM {table}")
                 tables_cleared += 1
+
+            # Os eventos foram apagados: os administradores que sobraram viram globais
+            cursor.execute("PRAGMA table_info(system_users)")
+            if "evento_id" in [row[1] for row in cursor.fetchall()]:
+                cursor.execute("UPDATE system_users SET evento_id = NULL")
 
             cursor.execute("PRAGMA foreign_keys = ON")
             conn.commit()

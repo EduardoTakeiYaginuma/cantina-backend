@@ -1,8 +1,9 @@
 # endpoints/customers.py
 import io
+import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
@@ -16,15 +17,24 @@ from app.core.dependencies import get_current_user, get_current_active_admin
 from app.repositories import CustomerRepository
 from app.models import (
     SystemUser, Customers, CustomerTipo, BalanceTransaction, Sale,
-    CustomerImportBatch, CustomerImportBatchItem
+    CustomerImportBatch, CustomerImportBatchItem, Pessoa, EventoTipo,
 )
 from app import schemas
 from app.services.audit import AuditService, get_changed_fields
-from app.models_audit import AuditAction
+from app.models_audit import AuditAction, CustomerAuditLog
 from app.services.event import get_active_event, week_filter
-from app.services.excel_templates import add_instructions_sheet, pick_data_sheet
+from app.services.excel_templates import (
+    Col, ExampleTable, add_instructions_sheet, build_data_sheet, finish_workbook, new_workbook,
+    parse_number, pick_data_sheet,
+)
+from app.services.pessoas import PessoaIndex, IGUAL, JA_NO_EVENTO
+from app.core.event_scope import scoped_event_id
+from app.api.v1.endpoints.pessoas import check_pessoa_free_in_event, fill_from_pessoa
 
 router = APIRouter(prefix="/customers", tags=["customers"])
+
+# Aba do modelo de clientes do evento genérico (sem acampante/equipe)
+GENERIC_SHEET = "CLIENTES"
 
 
 # ============================================
@@ -43,6 +53,9 @@ def create_customer(
     if customer_repo.nickname_exists(customer.nickname):
         raise HTTPException(status_code=409, detail="Nickname já existe")
 
+    # A mesma pessoa de outro evento (opcional)
+    pessoa = check_pessoa_free_in_event(db, customer.pessoa_id) if customer.pessoa_id is not None else None
+
     # Semana: definida pelo evento (semana atual). Sem evento ativo, aceita a informada.
     event = get_active_event(db)
     semana = event.semana_atual if event is not None else customer.semana
@@ -58,8 +71,11 @@ def create_customer(
         nome_pai=customer.nome_pai,
         nome_mae=customer.nome_mae,
         informacoes_contato=customer.informacoes_contato,
+        pessoa_id=pessoa.id if pessoa else None,
         created_by_id=current_user.id  # ← Registra quem criou
     )
+    if pessoa:
+        fill_from_pessoa(db_customer, pessoa)  # foto, pais e contato que a pessoa já tinha
 
     created_customer = customer_repo.create(db_customer)
 
@@ -484,46 +500,99 @@ def activate_customer(
 
 @router.get("/template/download")
 def download_customer_template(
+        db: Session = Depends(get_db),
         current_user: SystemUser = Depends(get_current_user)
 ):
     """Gera e retorna o template Excel para importação de clientes"""
-    wb = openpyxl.Workbook()
+    event = get_active_event(db)
+    week = event.semana_atual if event else None
+    week_name = event.semanas_nomes[week - 1] if event and week and week <= len(event.semanas_nomes) else None
+    rooms = [r.room_name for r in event.rooms if r.is_active and r.semana == week] if event else []
 
-    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-    header_font = Font(color="FFFFFF", bold=True)
-    headers = ["nome", "nickname", "quarto", "nome_pai", "nome_mae", "informacoes_contato", "saldo"]
+    cols = [
+        Col("Nome completo", 32, required=True, example="João Pedro Silva",
+            note="Nome da pessoa. Quem já veio em outro evento é reconhecido pelo nome; "
+                 "nomes parecidos são conferidos antes de importar."),
+        Col("Apelido", 20, required=True, example="joao",
+            note="Como aparece na venda. Não pode repetir dentro do evento."),
+        Col("Quarto", 12, example=rooms[0] if rooms else "M1", options=rooms or None,
+            note=("Um dos quartos da semana atual: " + ", ".join(rooms)) if rooms
+            else "Quarto da semana atual do evento (cadastre os quartos em Configurações > Evento)."),
+        Col("Nome do pai", 26, example="Carlos Silva", note="Opcional. Ajuda a diferenciar pessoas com o mesmo nome."),
+        Col("Nome da mãe", 26, example="Ana Silva", note="Opcional. Ajuda a diferenciar pessoas com o mesmo nome."),
+        Col("Contato", 26, example="(11) 99999-9999", note="Opcional. Telefone, e-mail ou observação."),
+        Col("Saldo inicial (R$)", 16, kind="money", example="50,00", note="Crédito já pago. Em branco = 0."),
+    ]
+    wb = new_workbook()
 
-    for sheet_title, tipo_label in [("ACAMPANTES", "acampante"), ("EQUIPE", "equipe")]:
-        ws = wb.create_sheet(title=sheet_title)
-        for col, header in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col, value=header)
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = Alignment(horizontal="center")
+    # Evento genérico: uma aba só, sem acampante/equipe (todos podem ficar com saldo negativo)
+    if event is not None and event.tipo == EventoTipo.GENERICO.value:
+        cols[2] = Col("Quarto", 12, example=rooms[0] if rooms else "", options=rooms or None,
+                      note="Opcional." + (" Quartos da semana atual: " + ", ".join(rooms) if rooms else ""))
+        build_data_sheet(wb, GENERIC_SHEET, cols)
+        add_instructions_sheet(
+            wb,
+            f"Importar clientes · {event.event_name}",
+            [
+                "Preencha a aba CLIENTES a partir da linha 2 (a linha 1 é o cabeçalho, não apague).",
+                "Obrigatórios: Nome completo e Apelido. As outras colunas são opcionais.",
+                "Evento genérico: não precisa dizer se é acampante ou equipe; "
+                "todos os clientes podem ficar com saldo negativo.",
+                "Ao importar, o sistema mostra quem já veio em outro evento para você confirmar antes de gravar.",
+                "Salve e envie o arquivo em Clientes > Importar Clientes.",
+            ],
+            cols,
+            [ExampleTable("Exemplo · aba CLIENTES", cols, [
+                ["João Pedro Silva", "joao", "", "Carlos Silva", "Ana Silva", "(11) 99999-9999", 50.0],
+                ["Maria Santos", "maria", "", "", "", "", 0],
+            ])],
+            [
+                "Apelidos que já existem neste evento são ignorados.",
+                "Saldo pode ser escrito como 50, 50,5 ou R$ 50,50.",
+                "Se algo der errado, a importação pode ser desfeita no histórico de importações.",
+            ],
+        )
+        finish_workbook(wb, GENERIC_SHEET)
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename="template_clientes_evento_generico.xlsx"'}
+        )
 
-        for col_letter, width in zip("ABCDEFG", [30, 20, 10, 25, 25, 30, 10]):
-            ws.column_dimensions[col_letter].width = width
-
-    # Remover sheet padrão vazio
-    if "Sheet" in wb.sheetnames:
-        del wb["Sheet"]
-
+    build_data_sheet(wb, "ACAMPANTES", cols)
+    build_data_sheet(wb, "EQUIPE", cols, tab_color="0EA5E9")
     add_instructions_sheet(
         wb,
+        "Importar clientes" + (f" · {event.event_name}" if event else ""),
         [
-            "Preencha os clientes nas abas ACAMPANTES e EQUIPE, a partir da linha 2.",
-            "Obrigatórios: nome e nickname (apelido, único). Os demais campos são opcionais.",
-            "quarto: use um dos quartos da semana atual do evento.",
-            "saldo: número (ex.: 50 ou 50.5). Em branco = 0.",
-            "A semana do cliente é a semana atual do evento no momento da importação.",
-            "Apelidos que já existem no sistema são ignorados.",
+            "Acampantes na aba ACAMPANTES e equipe na aba EQUIPE, a partir da linha 2 "
+            "(a linha 1 é o cabeçalho, não apague).",
+            "Obrigatórios: Nome completo e Apelido. As outras colunas são opcionais.",
+            f"Todos entram na semana atual do evento" + (f" ({week_name})." if week_name else "."),
+            "Ao importar, o sistema mostra quem já veio em outro evento para você confirmar antes de gravar.",
+            "Salve e envie o arquivo em Clientes > Importar Clientes.",
         ],
-        headers,
+        cols,
         [
-            ["João Silva", "joao", "M1", "Carlos Silva", "Ana Silva", "(11) 99999-9999", 50.0],
-            ["Maria Santos", "maria", "", "", "", "Coordenadora", 0.0],
+            ExampleTable("Exemplo · aba ACAMPANTES", cols, [
+                ["João Pedro Silva", "joao", rooms[0] if rooms else "M1", "Carlos Silva", "Ana Silva",
+                 "(11) 99999-9999", 50.0],
+                ["Maria Santos", "maria", rooms[0] if rooms else "F1", "", "", "", 0],
+            ]),
+            ExampleTable("Exemplo · aba EQUIPE", cols, [
+                ["Lucas Oliveira", "lucas", "", "", "", "Cozinha", 0],
+            ], note="Equipe pode ficar com saldo negativo e não precisa de quarto."),
+        ],
+        [
+            "Apelidos que já existem neste evento são ignorados.",
+            "Saldo pode ser escrito como 50, 50,5 ou R$ 50,50.",
+            "Se algo der errado, a importação pode ser desfeita no histórico de importações.",
         ],
     )
+    finish_workbook(wb, "ACAMPANTES")
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -536,102 +605,168 @@ def download_customer_template(
     )
 
 
-@router.post("/import")
-def import_customers_from_excel(
-        file: UploadFile = File(...),
-        db: Session = Depends(get_db),
-        current_user: SystemUser = Depends(get_current_user)
-):
-    """Importa clientes em massa a partir de um arquivo Excel com abas ACAMPANTES e EQUIPE"""
+def _read_import_rows(file: UploadFile):
+    """
+    Lê a planilha (abas ACAMPANTES e EQUIPE). Devolve (linhas válidas, ignoradas, erros).
+    Cada linha tem uma chave "ABA:linha" usada para as escolhas de vínculo.
+    """
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Arquivo deve ser .xlsx ou .xls")
-
     contents = file.file.read()
     try:
         wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
     except Exception:
         raise HTTPException(status_code=400, detail="Arquivo Excel inválido ou corrompido")
 
+    # CLIENTES: modelo do evento genérico (sem acampante/equipe)
+    sheet_tipo_map = {"ACAMPANTES": CustomerTipo.ACAMPANTE, "EQUIPE": CustomerTipo.EQUIPE,
+                      GENERIC_SHEET: CustomerTipo.ACAMPANTE}
+    sheets = [(name, wb[name], tipo) for name, tipo in sheet_tipo_map.items() if name in wb.sheetnames]
+    if not sheets:
+        # Arquivo sem abas padrão: trata a primeira aba de dados como ACAMPANTES
+        ws = pick_data_sheet(wb, "ACAMPANTES")
+        sheets = [(ws.title, ws, CustomerTipo.ACAMPANTE)]
+
+    def cell(row, i):
+        return str(row[i]).strip() if len(row) > i and row[i] is not None else None
+
+    rows, skipped, errors = [], 0, []
+    for sheet_name, ws, tipo in sheets:
+        for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            if not any(row):
+                continue
+            nome, nickname = cell(row, 0) or "", cell(row, 1) or ""
+            if not nome or not nickname:
+                skipped += 1
+                continue
+            try:
+                saldo = (parse_number(row[6], float) if len(row) > 6 else None) or 0.0
+            except (ValueError, TypeError) as e:
+                errors.append(f"Linha {row_num}: dados inválidos para '{nome}' - {e}")
+                continue
+            rows.append({
+                "key": f"{sheet_name}:{row_num}", "aba": sheet_name, "linha": row_num, "tipo": tipo,
+                "nome": nome, "nickname": nickname, "quarto": cell(row, 2), "nome_pai": cell(row, 3),
+                "nome_mae": cell(row, 4), "informacoes_contato": cell(row, 5), "saldo": saldo,
+            })
+    return rows, skipped, errors
+
+
+@router.post("/import/preview")
+def preview_customer_import(
+        file: UploadFile = File(...),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """
+    Confere a planilha antes de importar: para cada linha, se a pessoa já veio em outro evento.
+    status: "igual" (liga sozinho), "parecido" (alguém confirma), "nova", "apelido_existente" (será ignorada),
+    "ja_no_evento" (mesmo nome de alguém do evento: ignorada, a não ser que escolham importar como outra pessoa).
+    """
+    rows, skipped, errors = _read_import_rows(file)
+    customer_repo = CustomerRepository(db)
+    index = PessoaIndex(db, exclude_event_id=scoped_event_id(db))
+
+    taken, seen_nicks, linhas = set(), set(), []
+    for r in rows:
+        item = {k: (v.value if k == "tipo" else v) for k, v in r.items() if k not in ("saldo", "quarto")}
+        if r["nickname"] in seen_nicks or customer_repo.nickname_exists(r["nickname"]):
+            item.update(status="apelido_existente", pessoa_sugerida=None, candidatas=[])
+        else:
+            match = index.find_matches(r["nome"], r["nome_pai"], r["nome_mae"], taken=taken)
+            if match["status"] == IGUAL:
+                taken.add(match["pessoa_sugerida"])
+            item.update(match)
+        seen_nicks.add(r["nickname"])
+        linhas.append(item)
+
+    resumo = {s: sum(1 for x in linhas if x["status"] == s)
+              for s in ("igual", "parecido", "nova", "apelido_existente", "ja_no_evento")}
+    return {"linhas": linhas, "resumo": resumo, "ignoradas": skipped, "erros": errors}
+
+
+@router.post("/import")
+def import_customers_from_excel(
+        file: UploadFile = File(...),
+        vinculos: Optional[str] = Form(None, description='JSON {"ABA:linha": pessoa_id ou null}'),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """
+    Importa clientes em massa a partir de um arquivo Excel com abas ACAMPANTES e EQUIPE.
+    Pessoas de outros eventos: as escolhas em `vinculos` (da conferência) valem primeiro;
+    sem escolha, só liga sozinho quando o nome é igual. Nome parecido sem escolha vira pessoa nova.
+    """
+    try:
+        choices = {str(k): (int(v) if v is not None else None)
+                   for k, v in json.loads(vinculos or "{}").items()}
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=400, detail="vinculos inválido")
+
+    rows, skipped_count, errors = _read_import_rows(file)
+    error_count = len(errors)
+
     customer_repo = CustomerRepository(db)
     audit = AuditService(db)
     event = get_active_event(db)
     default_semana = event.semana_atual if event else None
+    index = PessoaIndex(db, exclude_event_id=scoped_event_id(db))
 
     imported_count = 0
-    skipped_count = 0
-    error_count = 0
+    linked_count = 0
     imported_ids = []
-    errors = []
+    taken = set()
 
-    # Mapeia nome de aba para tipo de cliente
-    sheet_tipo_map = {
-        "ACAMPANTES": CustomerTipo.ACAMPANTE,
-        "EQUIPE": CustomerTipo.EQUIPE,
-    }
+    for r in rows:
+        if customer_repo.nickname_exists(r["nickname"]):
+            skipped_count += 1
+            continue
 
-    # Se o arquivo tem abas nomeadas usa elas, senão usa a primeira como ACAMPANTES
-    sheets_to_process = []
-    for sheet_name, tipo in sheet_tipo_map.items():
-        if sheet_name in wb.sheetnames:
-            sheets_to_process.append((wb[sheet_name], tipo))
-
-    if not sheets_to_process:
-        # Arquivo sem abas padrão: trata a primeira aba de dados como ACAMPANTES
-        sheets_to_process = [(pick_data_sheet(wb, "ACAMPANTES"), CustomerTipo.ACAMPANTE)]
-
-    for ws, tipo in sheets_to_process:
-        rows = list(ws.iter_rows(min_row=2, values_only=True))
-
-        for row_num, row in enumerate(rows, start=2):
-            if not any(row):
-                continue
-
-            nome = str(row[0]).strip() if row[0] is not None else ""
-            nickname = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ""
-
-            if not nome or not nickname:
+        if r["key"] in choices:
+            pessoa_id = choices[r["key"]]
+        else:
+            match = index.find_matches(r["nome"], r["nome_pai"], r["nome_mae"], taken=taken)
+            if match["status"] == JA_NO_EVENTO:
                 skipped_count += 1
                 continue
+            pessoa_id = match["pessoa_sugerida"] if match["status"] == IGUAL else None
+        if pessoa_id is not None and (pessoa_id in taken or pessoa_id in index.in_event
+                                      or pessoa_id not in index.pessoas):
+            errors.append(f"Linha {r['linha']} ({r['aba']}): '{r['nome']}' não pôde ser ligado à pessoa "
+                          "escolhida (ela já está neste evento); entrou como pessoa nova.")
+            pessoa_id = None
 
-            if customer_repo.nickname_exists(nickname):
-                skipped_count += 1
-                continue
+        db_customer = Customers(
+            nome=r["nome"],
+            nickname=r["nickname"],
+            quarto=r["quarto"] or None,
+            semana=default_semana,
+            saldo=r["saldo"],
+            tipo=r["tipo"],
+            nome_pai=r["nome_pai"] or None,
+            nome_mae=r["nome_mae"] or None,
+            informacoes_contato=r["informacoes_contato"] or None,
+            pessoa_id=pessoa_id,
+            created_by_id=current_user.id
+        )
+        if pessoa_id is not None:
+            fill_from_pessoa(db_customer, index.pessoas[pessoa_id])  # foto, pais e contato de antes
+            taken.add(pessoa_id)
+            linked_count += 1
+        db.add(db_customer)
+        db.flush()
+        imported_ids.append(db_customer.id)
 
-            try:
-                quarto = str(row[2]).strip() if len(row) > 2 and row[2] is not None else None
-                nome_pai = str(row[3]).strip() if len(row) > 3 and row[3] is not None else None
-                nome_mae = str(row[4]).strip() if len(row) > 4 and row[4] is not None else None
-                informacoes_contato = str(row[5]).strip() if len(row) > 5 and row[5] is not None else None
-                saldo = float(row[6]) if len(row) > 6 and row[6] is not None else 0.0
-            except (ValueError, TypeError) as e:
-                errors.append(f"Linha {row_num}: dados inválidos para '{nome}' - {e}")
-                error_count += 1
-                continue
-
-            db_customer = Customers(
-                nome=nome,
-                nickname=nickname,
-                quarto=quarto or None,
-                semana=default_semana,
-                saldo=saldo,
-                tipo=tipo,
-                nome_pai=nome_pai or None,
-                nome_mae=nome_mae or None,
-                informacoes_contato=informacoes_contato or None,
-                created_by_id=current_user.id
-            )
-            db.add(db_customer)
-            db.flush()
-            imported_ids.append(db_customer.id)
-
-            audit.log_customer_action(
-                customer_id=db_customer.id,
-                action=AuditAction.CREATE,
-                created_by_id=current_user.id,
-                new_values={"nome": nome, "nickname": nickname, "tipo": tipo.value, "saldo": saldo},
-                description=f"Cliente importado via Excel por {current_user.username}"
-            )
-            imported_count += 1
+        audit.log_customer_action(
+            customer_id=db_customer.id,
+            action=AuditAction.CREATE,
+            created_by_id=current_user.id,
+            new_values={"nome": r["nome"], "nickname": r["nickname"], "tipo": r["tipo"].value,
+                        "saldo": r["saldo"], "pessoa_id": db_customer.pessoa_id},
+            description=f"Cliente importado via Excel por {current_user.username}"
+                        + (" (mesma pessoa de outro evento)" if pessoa_id is not None else "")
+        )
+        imported_count += 1
 
     # Criar batch de importação
     batch = CustomerImportBatch(
@@ -655,11 +790,13 @@ def import_customers_from_excel(
         "filename": file.filename,
         "statistics": {
             "imported": imported_count,
+            "linked": linked_count,
             "skipped": skipped_count,
             "errors": error_count,
         },
         "errors": errors,
         "message": f"{imported_count} cliente(s) importado(s) com sucesso"
+                   + (f", {linked_count} ligado(s) a pessoas de outros eventos" if linked_count else "")
     }
 
 
@@ -775,11 +912,24 @@ def rollback_customer_import_batch(
             )
 
     deleted_count = 0
+    pessoa_ids = set()
     for customer_id in customer_ids:
         customer = db.query(Customers).filter(Customers.id == customer_id).first()
         if customer:
+            if customer.pessoa_id:
+                pessoa_ids.add(customer.pessoa_id)
+            # O registro de auditoria só descreve a criação que está sendo desfeita
+            db.query(CustomerAuditLog).filter(CustomerAuditLog.customer_id == customer_id).delete(
+                synchronize_session=False)
             db.delete(customer)
             deleted_count += 1
+    db.flush()
+
+    # Pessoa que só existia por causa desta importação (sem cadastro em nenhum evento)
+    for pessoa_id in pessoa_ids:
+        if not db.query(Customers.id).execution_options(all_events=True).filter(
+                Customers.pessoa_id == pessoa_id).first():
+            db.query(Pessoa).filter(Pessoa.id == pessoa_id).delete(synchronize_session=False)
 
     db.query(CustomerImportBatchItem).filter(
         CustomerImportBatchItem.batch_id == batch_id

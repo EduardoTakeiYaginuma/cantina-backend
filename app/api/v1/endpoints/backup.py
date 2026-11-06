@@ -255,6 +255,15 @@ async def restore_from_upload(
         # Substitui o banco atual
         shutil.copy2(tmp_path, str(db_path))
 
+        # Arquivo de antes do isolamento por evento: colunas novas + dados sem evento no evento ativo
+        from database import engine
+        from app import models, models_audit  # noqa: F401 (registra as tabelas)
+        from app.core.schema_migrations import run_migrations, assign_legacy_rows_to_active_event
+        engine.dispose()
+        models.Base.metadata.create_all(bind=engine)
+        run_migrations(engine)
+        assign_legacy_rows_to_active_event(engine)
+
         return schemas.BackupResponse(
             success=True,
             message=f"Banco de dados restaurado com sucesso a partir de '{file.filename}'",

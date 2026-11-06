@@ -12,12 +12,14 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from app.core.dependencies import get_current_user, get_current_active_admin
-from app.models import SystemUser, EventConfig, EventRoom, Customers
+from app.models import SystemUser, EventConfig, EventRoom, Customers, Produto, Sale, GuestSale
 from app.schemas.event_config import (
     EventConfigCreate, EventConfigUpdate, EventConfigResponse, EventConfigSummary,
     EventRoomCreate, EventRoomUpdate, EventRoomResponse,
 )
 from app.services.event import get_active_event
+from app.services.default_customers import ensure_default_customers
+from app.core.event_scope import set_event_scope
 
 router = APIRouter(prefix="/event-config", tags=["event-config"])
 
@@ -81,6 +83,7 @@ def create_event_config(
     """Cria um evento novo e o torna o ativo (desativa os anteriores)."""
     config = EventConfig(
         event_name=data.event_name.strip(),
+        tipo=data.tipo,
         is_active=True,
         num_semanas=data.num_semanas,
         semana_atual=data.semana_atual,
@@ -105,6 +108,11 @@ def create_event_config(
                              display_order=len(seen) - 1, is_active=True, created_by_id=current_user.id))
 
     _deactivate_others(db, config.id)
+
+    # O evento novo já nasce com os clientes padrão da equipe (Mateus e Eduardo, com foto e saldo 0)
+    set_event_scope(db, config.id)
+    ensure_default_customers(db, created_by_id=current_user.id)
+
     db.commit()
     db.refresh(config)
     return config
@@ -129,6 +137,7 @@ def list_event_configs(
         {
             "id": c.id,
             "event_name": c.event_name,
+            "tipo": c.tipo or "acampamento",
             "is_active": c.is_active,
             "num_semanas": c.num_semanas,
             "semana_atual": c.semana_atual,
@@ -254,6 +263,22 @@ def delete_event_config(
         current_user: SystemUser = Depends(get_current_user),
 ):
     config = _get_config_or_404(db, config_id)
+
+    # Os dados do evento (clientes, produtos, vendas...) não podem ficar sem dono
+    in_use = []
+    for model, label in ((Customers, "cliente(s)"), (Produto, "produto(s)"), (Sale, "venda(s)"),
+                         (GuestSale, "venda(s) avulsa(s)"), (SystemUser, "perfil(is)")):
+        n = (db.query(func.count(model.id)).execution_options(all_events=True)
+             .filter(model.evento_id == config_id).scalar() or 0)
+        if n:
+            in_use.append(f"{n} {label}")
+    if in_use:
+        raise HTTPException(
+            status_code=409,
+            detail=(f"O evento \"{config.event_name}\" tem dados ({', '.join(in_use)}). "
+                    "Para não perder esse histórico, ele não pode ser excluído."),
+        )
+
     db.delete(config)
     db.commit()
     return {"message": "Configuração removida", "config_id": config_id}
@@ -305,11 +330,12 @@ def week_summary(
         db: Session = Depends(get_db),
         current_user: SystemUser = Depends(get_current_user),
 ):
-    """Quantos clientes ativos há em cada semana ("sem_semana" = cadastros sem semana)."""
+    """Quantos clientes ativos do evento há em cada semana ("sem_semana" = cadastros sem semana)."""
     _get_config_or_404(db, config_id)
     rows = (
         db.query(Customers.semana, func.count(Customers.id))
-        .filter(Customers.is_active == True)  # noqa: E712
+        .execution_options(all_events=True)
+        .filter(Customers.evento_id == config_id, Customers.is_active == True)  # noqa: E712
         .group_by(Customers.semana)
         .all()
     )

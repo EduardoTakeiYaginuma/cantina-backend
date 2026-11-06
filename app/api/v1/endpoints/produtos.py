@@ -12,13 +12,19 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 
 from database import get_db
-from app.services.excel_templates import add_instructions_sheet, pick_data_sheet
+from app.services.excel_templates import (
+    Col, ExampleTable, add_instructions_sheet, build_data_sheet, finish_workbook, header_columns,
+    new_workbook, parse_number, pick_data_sheet,
+)
 from app.core.dependencies import get_current_user, get_current_active_admin
 from app.repositories import ProdutoRepository
-from app.models import SystemUser, Produto, SaleItem, Restock, ProductImportBatch, ProductImportBatchItem
+from app.models import (
+    SystemUser, Produto, ProdutoGrupo, SaleItem, GuestSaleItem, Restock, ProductImportBatch,
+    ProductImportBatchItem,
+)
 from app import schemas
 from app.services.audit import AuditService, get_changed_fields
-from app.models_audit import AuditAction
+from app.models_audit import AuditAction, ProductAuditLog
 
 router = APIRouter(prefix="/produtos", tags=["produtos"])
 
@@ -485,6 +491,72 @@ def get_produtos_summary(
     }
 
 
+# Colunas do modelo de produtos (a importação acha as colunas pelo cabeçalho)
+PRODUCT_COLS = [
+    Col("Produto", 30, required=True, example="Coca-Cola / KitKat",
+        note="Nome do produto. Para produto com sabores, repita o mesmo nome em uma linha por sabor."),
+    Col("Sabor", 22, example="Morango",
+        note="Só para produto com sabores (ex.: KitKat → Morango). Cada sabor vira um produto com estoque "
+             "próprio, chamado \"KitKat - Morango\". Deixe em branco nos produtos comuns."),
+    Col("Preço (R$)", 14, required=True, kind="money", example="5,50",
+        note="Preço de venda. Número maior que zero. Em produto com sabores, se ficar em branco usa o "
+             "preço do sabor anterior do mesmo produto."),
+    Col("Estoque", 12, kind="int", example="100", note="Quantidade inicial em estoque. Em branco = 0."),
+    Col("Estoque mínimo", 16, kind="int", example="10",
+        note="Abaixo disso o produto aparece como estoque baixo. Em branco = 10."),
+]
+PRODUCT_ALIASES = {
+    "nome": ["nome", "produto", "nome do produto", "nome produto"],
+    "sabor": ["sabor", "variante", "variacao", "sabor variacao"],
+    "valor": ["valor", "preco", "preco de venda"],
+    "estoque": ["estoque", "estoque inicial", "quantidade"],
+    "estoque_minimo": ["estoque minimo", "estoque min", "minimo"],
+}
+# Planilha antiga, sem cabeçalho reconhecível: nome, valor, estoque, estoque_minimo
+PRODUCT_LEGACY = {"nome": 0, "valor": 1, "estoque": 2, "estoque_minimo": 3}
+
+RESTOCK_COLS = [
+    Col("Produto", 30, required=True, example="KitKat",
+        note="Nome do produto como está no sistema (sem o sabor)."),
+    Col("Sabor", 22, example="Morango", note="Só para produto com sabores. Em branco nos produtos comuns."),
+    Col("Quantidade", 14, required=True, kind="int", example="50",
+        note="Unidades que estão entrando no estoque. Número inteiro maior que zero."),
+]
+RESTOCK_ALIASES = {
+    "nome": ["nome produto", "produto", "nome", "nome do produto"],
+    "sabor": ["sabor", "variante", "variacao"],
+    "quantidade": ["quantidade", "qtd", "quantidade entrando"],
+}
+RESTOCK_LEGACY = {"nome": 0, "quantidade": 1}
+
+
+def _xlsx_response(wb, filename: str) -> StreamingResponse:
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+def _sheet_columns(ws, aliases, legacy, required=("nome",)):
+    cols = header_columns(ws, aliases)
+    return cols if all(f in cols for f in required) else legacy
+
+
+def _cell(row, cols, field_name):
+    idx = cols.get(field_name)
+    if idx is None or idx >= len(row) or row[idx] is None:
+        return None
+    value = row[idx]
+    return value.strip() if isinstance(value, str) else value
+
+
+_number = parse_number
+
+
 # ============================================
 # Importação via Excel - Produtos
 # ============================================
@@ -493,45 +565,42 @@ def get_produtos_summary(
 def download_product_template(
         current_user: SystemUser = Depends(get_current_user)
 ):
-    """Gera e retorna o template Excel para importação de produtos"""
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Produtos"
-
-    headers = ["nome", "valor", "estoque", "estoque_minimo"]
-    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-    header_font = Font(color="FFFFFF", bold=True)
-
-    for col, header in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col, value=header)
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = Alignment(horizontal="center")
-
-    ws.column_dimensions["A"].width = 30
-    ws.column_dimensions["B"].width = 12
-    ws.column_dimensions["C"].width = 12
-    ws.column_dimensions["D"].width = 18
-
+    """Gera e retorna o template Excel para importação de produtos (com sabores)"""
+    wb = new_workbook()
+    build_data_sheet(wb, "Produtos", PRODUCT_COLS)
     add_instructions_sheet(
         wb,
+        "Importar produtos",
         [
-            "Preencha os produtos na aba Produtos, a partir da linha 2.",
-            "nome e valor são obrigatórios. estoque e estoque_minimo são números inteiros.",
+            "Preencha a aba Produtos a partir da linha 2 (a linha 1 é o cabeçalho, não apague).",
+            "Produto comum: uma linha com o nome e o preço; deixe a coluna Sabor em branco.",
+            "Produto com sabores: uma linha para cada sabor, repetindo o mesmo nome do produto. "
+            "Cada sabor vira um produto com estoque próprio (ex.: \"KitKat - Morango\").",
+            "Produtos (ou sabores) que já existem neste evento são ignorados; para dar entrada no estoque, "
+            "use a importação de reabastecimento.",
+            "Salve e envie o arquivo em Produtos > Importar.",
         ],
-        headers,
-        [["Coca-Cola", 5.00, 100, 10]],
+        PRODUCT_COLS,
+        [ExampleTable(
+            "Exemplo",
+            PRODUCT_COLS,
+            [
+                ["Coca-Cola", "", 5.00, 100, 10],
+                ["Água", "", 3.00, 80, 10],
+                ["KitKat", "Morango", 4.50, 30, 5],
+                ["KitKat", "Ao leite", 4.50, 30, 5],
+                ["KitKat", "Branco", "", 20, 5],
+            ],
+            note="O KitKat vira um produto com 3 sabores; o Branco usa o preço do sabor de cima (R$ 4,50).",
+        )],
+        [
+            "Os sabores de um produto que já existe no sistema entram nele (ex.: um sabor novo de KitKat).",
+            "Preço pode ser escrito como 5, 5,50 ou R$ 5,50.",
+            "Se algo der errado, a importação pode ser desfeita no histórico de importações.",
+        ],
     )
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-
-    return StreamingResponse(
-        buf,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="template_produtos.xlsx"'}
-    )
+    finish_workbook(wb, "Produtos")
+    return _xlsx_response(wb, "template_produtos.xlsx")
 
 
 @router.get("/restock/template/download")
@@ -539,42 +608,27 @@ def download_restock_template(
         current_user: SystemUser = Depends(get_current_user)
 ):
     """Gera e retorna o template Excel para importação de reabastecimento em massa"""
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Reabastecimento"
-
-    headers = ["nome_produto", "quantidade"]
-    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-    header_font = Font(color="FFFFFF", bold=True)
-
-    for col, header in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col, value=header)
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = Alignment(horizontal="center")
-
-    ws.column_dimensions["A"].width = 30
-    ws.column_dimensions["B"].width = 15
-
+    wb = new_workbook()
+    build_data_sheet(wb, "Reabastecimento", RESTOCK_COLS)
     add_instructions_sheet(
         wb,
+        "Reabastecer produtos",
         [
-            "Preencha na aba Reabastecimento, a partir da linha 2.",
-            "nome_produto: igual ao cadastrado no sistema. quantidade: unidades que estão entrando.",
+            "Preencha a aba Reabastecimento a partir da linha 2 (a linha 1 é o cabeçalho, não apague).",
+            "Produto: o nome como está no sistema. Para produto com sabores, coloque o sabor na coluna Sabor.",
+            "Quantidade: quantas unidades estão entrando no estoque.",
+            "Salve e envie o arquivo em Reabastecimento > Importar.",
         ],
-        headers,
-        [["Coca-Cola", 50]],
+        RESTOCK_COLS,
+        [ExampleTable(
+            "Exemplo",
+            RESTOCK_COLS,
+            [["Coca-Cola", "", 50], ["KitKat", "Morango", 20], ["KitKat", "Ao leite", 15]],
+        )],
+        ["Maiúsculas e minúsculas não importam: \"kitkat\" e \"KitKat\" são o mesmo produto."],
     )
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-
-    return StreamingResponse(
-        buf,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="template_reabastecimento_produtos.xlsx"'}
-    )
+    finish_workbook(wb, "Reabastecimento")
+    return _xlsx_response(wb, "template_reabastecimento_produtos.xlsx")
 
 
 @router.post("/import")
@@ -583,7 +637,11 @@ def import_products_from_excel(
         db: Session = Depends(get_db),
         current_user: SystemUser = Depends(get_current_user)
 ):
-    """Importa produtos em massa a partir de um arquivo Excel"""
+    """
+    Importa produtos em massa a partir de um arquivo Excel.
+    Linhas com Sabor criam (ou completam) um produto com sabores: um produto por sabor,
+    chamado "<produto> - <sabor>", igual ao cadastro pela tela.
+    """
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Arquivo deve ser .xlsx ou .xls")
 
@@ -594,6 +652,7 @@ def import_products_from_excel(
         raise HTTPException(status_code=400, detail="Arquivo Excel inválido ou corrompido")
 
     ws = pick_data_sheet(wb, "Produtos")
+    cols = _sheet_columns(ws, PRODUCT_ALIASES, PRODUCT_LEGACY)
     rows = list(ws.iter_rows(min_row=2, values_only=True))
 
     produto_repo = ProdutoRepository(db)
@@ -604,49 +663,89 @@ def import_products_from_excel(
     error_count = 0
     imported_ids = []
     errors = []
+    avisos = []
+    grupos = {}            # nome do grupo (minúsculo) -> ProdutoGrupo
+    created_groups = []
+    last_variant = {}      # grupo -> último sabor (preço/estoque mínimo padrão)
+
+    def find_group(nome):
+        key = nome.lower()
+        if key not in grupos:
+            grupos[key] = db.query(ProdutoGrupo).filter(func.lower(ProdutoGrupo.nome) == key).first()
+        return grupos[key]
 
     for row_num, row in enumerate(rows, start=2):
-        if not any(row):
+        if not any(v not in (None, "") for v in row):
             continue
 
-        nome = str(row[0]).strip() if row[0] is not None else ""
+        nome = str(_cell(row, cols, "nome") or "").strip()
+        sabor = str(_cell(row, cols, "sabor") or "").strip()
         if not nome:
             skipped_count += 1
+            avisos.append(f"Linha {row_num}: sem nome do produto, ignorada")
             continue
+        label = f"{nome} - {sabor}" if sabor else nome
 
         try:
-            valor = float(row[1]) if row[1] is not None else None
-            if valor is None or valor <= 0:
-                errors.append(f"Linha {row_num}: valor inválido para '{nome}'")
-                error_count += 1
-                continue
-
-            estoque = int(row[2]) if row[2] is not None else 0
-            estoque_minimo = int(row[3]) if row[3] is not None else 10
+            valor = _number(_cell(row, cols, "valor"), float)
+            estoque = _number(_cell(row, cols, "estoque"), int)
+            estoque_minimo = _number(_cell(row, cols, "estoque_minimo"), int)
         except (ValueError, TypeError):
-            errors.append(f"Linha {row_num}: dados inválidos para '{nome}'")
+            errors.append(f"Linha {row_num}: número inválido em '{label}' (preço, estoque ou estoque mínimo)")
             error_count += 1
             continue
 
-        if produto_repo.nome_exists(nome):
-            skipped_count += 1
+        grupo = None
+        if sabor:
+            grupo = find_group(nome)
+            ref = last_variant.get(nome.lower())
+            if ref is None and grupo is not None:
+                ref = next((p for p in grupo.produtos if p.is_active), None)
+            if valor is None and ref is not None:
+                valor = ref.valor
+            if estoque_minimo is None and ref is not None:
+                estoque_minimo = ref.estoque_minimo
+
+        if valor is None or valor <= 0:
+            errors.append(f"Linha {row_num}: preço inválido para '{label}'")
+            error_count += 1
             continue
 
+        if produto_repo.nome_exists(label) or (sabor and grupo is not None and any(
+                (p.variante or "").lower() == sabor.lower() for p in grupo.produtos)):
+            skipped_count += 1
+            avisos.append(f"Linha {row_num}: '{label}' já existe, ignorado")
+            continue
+
+        if sabor and grupo is None:
+            grupo = ProdutoGrupo(nome=nome, created_by_id=current_user.id)
+            db.add(grupo)
+            db.flush()
+            grupos[nome.lower()] = grupo
+            created_groups.append(grupo.id)
+
         db_produto = Produto(
-            nome=nome,
+            nome=f"{grupo.nome} - {sabor}" if grupo is not None else nome,
             valor=valor,
-            estoque=max(0, estoque),
-            estoque_minimo=max(0, estoque_minimo),
+            estoque=max(0, estoque or 0),
+            estoque_minimo=max(0, estoque_minimo if estoque_minimo is not None else 10),
+            grupo_id=grupo.id if grupo is not None else None,
+            variante=sabor or None,
             created_by_id=current_user.id
         )
-        created = produto_repo.create(db_produto)
-        imported_ids.append(created.id)
+        db.add(db_produto)
+        db.flush()
+        if grupo is not None:
+            db.refresh(grupo)
+            last_variant[nome.lower()] = db_produto
+        imported_ids.append(db_produto.id)
 
         audit.log_product_action(
-            produto_id=created.id,
+            produto_id=db_produto.id,
             action=AuditAction.CREATE,
             created_by_id=current_user.id,
-            new_values={"nome": created.nome, "valor": created.valor, "estoque": created.estoque},
+            new_values={"nome": db_produto.nome, "valor": db_produto.valor, "estoque": db_produto.estoque,
+                        **({"grupo": grupo.nome, "variante": sabor} if grupo is not None else {})},
             description=f"Produto importado via Excel por {current_user.username}"
         )
         imported_count += 1
@@ -668,16 +767,21 @@ def import_products_from_excel(
 
     db.commit()
 
+    sabores = sum(1 for pid in imported_ids if (p := db.get(Produto, pid)) is not None and p.grupo_id)
     return {
         "batch_id": batch.id,
         "filename": file.filename,
         "statistics": {
             "imported": imported_count,
+            "flavors": sabores,
+            "new_groups": len(created_groups),
             "skipped": skipped_count,
             "errors": error_count,
         },
         "errors": errors,
+        "warnings": avisos,
         "message": f"{imported_count} produto(s) importado(s) com sucesso"
+                   + (f" ({sabores} sabor(es))" if sabores else "")
     }
 
 
@@ -687,7 +791,7 @@ def import_restock_from_excel(
         db: Session = Depends(get_db),
         current_user: SystemUser = Depends(get_current_user)
 ):
-    """Importa reabastecimento em massa a partir de um arquivo Excel"""
+    """Importa reabastecimento em massa a partir de um arquivo Excel (aceita a coluna Sabor)"""
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Arquivo deve ser .xlsx ou .xls")
 
@@ -698,6 +802,7 @@ def import_restock_from_excel(
         raise HTTPException(status_code=400, detail="Arquivo Excel inválido ou corrompido")
 
     ws = pick_data_sheet(wb, "Reabastecimento")
+    cols = _sheet_columns(ws, RESTOCK_ALIASES, RESTOCK_LEGACY)
     rows = list(ws.iter_rows(min_row=2, values_only=True))
 
     produto_repo = ProdutoRepository(db)
@@ -707,32 +812,40 @@ def import_restock_from_excel(
     errors = []
 
     for row_num, row in enumerate(rows, start=2):
-        if not any(row):
+        if not any(v not in (None, "") for v in row):
             continue
 
-        nome_produto = str(row[0]).strip() if row[0] is not None else ""
+        nome_produto = str(_cell(row, cols, "nome") or "").strip()
+        sabor = str(_cell(row, cols, "sabor") or "").strip()
         if not nome_produto:
             skipped += 1
             continue
+        label = f"{nome_produto} - {sabor}" if sabor else nome_produto
 
         try:
-            quantidade = int(row[1]) if row[1] is not None else 0
-            if quantidade <= 0:
-                errors.append(f"Linha {row_num}: quantidade inválida para '{nome_produto}'")
-                skipped += 1
-                continue
+            quantidade = _number(_cell(row, cols, "quantidade"), int) or 0
         except (ValueError, TypeError):
-            errors.append(f"Linha {row_num}: quantidade inválida para '{nome_produto}'")
+            quantidade = 0
+        if quantidade <= 0:
+            errors.append(f"Linha {row_num}: quantidade inválida para '{label}'")
             skipped += 1
             continue
 
-        produto = db.query(Produto).filter(
-            Produto.nome.ilike(nome_produto),
-            Produto.is_active == True
-        ).first()
+        query = db.query(Produto).filter(Produto.is_active == True)  # noqa: E712
+        if sabor:
+            query = query.join(ProdutoGrupo, ProdutoGrupo.id == Produto.grupo_id).filter(
+                func.lower(ProdutoGrupo.nome) == nome_produto.lower(),
+                func.lower(Produto.variante) == sabor.lower(),
+            )
+        else:
+            query = query.filter(func.lower(Produto.nome) == nome_produto.lower())
+        produto = query.first()
 
         if not produto:
-            errors.append(f"Linha {row_num}: produto '{nome_produto}' não encontrado")
+            has_flavors = not sabor and db.query(ProdutoGrupo.id).filter(
+                func.lower(ProdutoGrupo.nome) == nome_produto.lower()).first()
+            errors.append(f"Linha {row_num}: '{label}' tem sabores; preencha a coluna Sabor" if has_flavors
+                          else f"Linha {row_num}: produto '{label}' não encontrado")
             skipped += 1
             continue
 
@@ -850,24 +963,31 @@ def rollback_import_batch(
 
     produto_ids = [item.produto_id for item in batch.items]
 
-    has_sales = False
     if produto_ids:
-        has_sales = db.query(SaleItem).filter(SaleItem.produto_id.in_(produto_ids)).first() is not None
-
-    if has_sales:
-        raise HTTPException(
-            status_code=400,
-            detail="Não é possível reverter: alguns produtos já foram vendidos"
-        )
+        if (db.query(SaleItem.id).filter(SaleItem.produto_id.in_(produto_ids)).first()
+                or db.query(GuestSaleItem.id).filter(GuestSaleItem.produto_id.in_(produto_ids)).first()):
+            raise HTTPException(status_code=400, detail="Não é possível reverter: alguns produtos já foram vendidos")
+        if db.query(Restock.id).filter(Restock.produto_id.in_(produto_ids)).first():
+            raise HTTPException(status_code=400,
+                                detail="Não é possível reverter: alguns produtos já foram reabastecidos")
 
     deleted_count = 0
     for produto_id in produto_ids:
         produto = db.query(Produto).filter(Produto.id == produto_id).first()
         if produto:
+            # O registro de auditoria só descreve a criação que está sendo desfeita
+            db.query(ProductAuditLog).filter(ProductAuditLog.produto_id == produto_id).delete(
+                synchronize_session=False)
             db.delete(produto)
             deleted_count += 1
 
     db.query(ProductImportBatchItem).filter(ProductImportBatchItem.batch_id == batch_id).delete()
+    db.flush()
+
+    # Produto com sabores que ficou sem nenhum sabor
+    for grupo in db.query(ProdutoGrupo).all():
+        if not db.query(Produto.id).filter(Produto.grupo_id == grupo.id).first():
+            db.delete(grupo)
 
     batch.status = "rolled_back"
     batch.rolled_back_at = datetime.now()

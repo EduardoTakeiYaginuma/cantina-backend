@@ -1,7 +1,7 @@
 # schemas/event_config.py
 """Schemas da configuração do evento (nome, semanas e quartos)."""
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -36,8 +36,13 @@ class EventRoomResponse(BaseModel):
         from_attributes = True
 
 
+# acampamento: só a equipe fica negativa · generico: qualquer cliente pode ficar negativo
+EventoTipoLiteral = Literal["acampamento", "generico"]
+
+
 class EventConfigCreate(BaseModel):
     event_name: str = Field(..., min_length=1, max_length=255)
+    tipo: EventoTipoLiteral = "acampamento"
     # Quartos por semana: {1: ["Q1", "Q2"], 2: ["Q3"]}. "rooms" (lista simples) entra na semana 1.
     rooms_by_week: Dict[int, List[str]] = Field(default_factory=dict)
     rooms: List[str] = Field(default_factory=list)
@@ -58,6 +63,7 @@ class EventConfigCreate(BaseModel):
 
 class EventConfigUpdate(BaseModel):
     event_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    tipo: Optional[EventoTipoLiteral] = None
     is_active: Optional[bool] = None
     num_semanas: Optional[int] = Field(None, ge=1, le=MAX_SEMANAS)
     semana_atual: Optional[int] = Field(None, ge=1, le=MAX_SEMANAS)
@@ -67,6 +73,7 @@ class EventConfigUpdate(BaseModel):
 class EventConfigResponse(BaseModel):
     id: int
     event_name: str
+    tipo: str = "acampamento"
     is_active: bool
     num_semanas: int
     semana_atual: int
@@ -84,6 +91,7 @@ class EventConfigResponse(BaseModel):
 class EventConfigSummary(BaseModel):
     id: int
     event_name: str
+    tipo: str = "acampamento"
     is_active: bool
     num_semanas: int
     semana_atual: int

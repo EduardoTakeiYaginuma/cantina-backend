@@ -29,18 +29,24 @@ class SystemUserRepository(BaseRepository[SystemUser]):
             SystemUser.is_active == True
         ).all()
 
-    def username_exists(self, username: str) -> bool:
-        """Verifica se username já existe"""
-        return self.db.query(SystemUser).filter(
+    def get_by_username_any_event(self, username: str) -> Optional[SystemUser]:
+        """Busca por username em todos os eventos (o login é único no sistema todo)"""
+        return self.db.query(SystemUser).execution_options(all_events=True).filter(
             SystemUser.username == username
-        ).first() is not None
+        ).first()
+
+    def username_exists(self, username: str) -> bool:
+        """Verifica se username já existe (em qualquer evento)"""
+        return self.get_by_username_any_event(username) is not None
 
     def create_user(self, username: str, hashed_password: str,
                     role: UserRole = UserRole.OPERADOR,
-                    created_by_id: Optional[int] = None) -> SystemUser:
-        """Cria um novo usuário do sistema"""
+                    created_by_id: Optional[int] = None,
+                    evento_id: Optional[int] = None) -> SystemUser:
+        """Cria um novo usuário do sistema (evento_id vazio = perfil global)"""
         user = SystemUser(
             username=username,
+            evento_id=evento_id,
             hashed_password=hashed_password,
             role=role,
             is_active=True,

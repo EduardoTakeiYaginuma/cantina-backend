@@ -12,6 +12,7 @@ from .user import (
     PasswordChange,
     AdminPasswordChange,
     RoleChange,
+    GlobalChange,
     Token,
     TokenData,
 )
@@ -118,6 +119,7 @@ __all__ = [
     "PasswordChange",
     "AdminPasswordChange",
     "RoleChange",
+    "GlobalChange",
     "Token",
     "TokenData",
     # Customer

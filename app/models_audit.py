@@ -36,6 +36,8 @@ class CustomerAuditLog(Base):
     __tablename__ = "customer_audit_logs"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Evento a que o registro pertence (cada evento tem dados próprios)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
     action = Column(Enum(AuditAction), nullable=False)
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
@@ -70,6 +72,8 @@ class ProductAuditLog(Base):
     __tablename__ = "product_audit_logs"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Evento a que o registro pertence (cada evento tem dados próprios)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
     produto_id = Column(Integer, ForeignKey("produtos.id"), nullable=False)
     action = Column(Enum(AuditAction), nullable=False)
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
@@ -101,6 +105,8 @@ class SystemUserAuditLog(Base):
     __tablename__ = "system_user_audit_logs"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Evento a que o registro pertence (cada evento tem dados próprios)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     action = Column(Enum(AuditAction), nullable=False)
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
@@ -132,6 +138,8 @@ class SaleAuditLog(Base):
     __tablename__ = "sale_audit_logs"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Evento a que o registro pertence (cada evento tem dados próprios)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
     sale_id = Column(Integer, nullable=False)  # Não usa FK pois venda pode ser deletada
     action = Column(Enum(AuditAction), nullable=False)
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)

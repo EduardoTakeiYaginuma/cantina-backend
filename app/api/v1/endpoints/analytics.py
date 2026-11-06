@@ -144,6 +144,7 @@ def get_top_selling_products(
 
     guest = db.query(
         Produto.id,
+        Produto.nome,
         func.sum(GuestSaleItem.quantity).label("quantity"),
         func.sum(GuestSaleItem.total_price).label("revenue"),
         func.count(GuestSale.id.distinct()).label("num_sales"),
@@ -151,7 +152,7 @@ def get_top_selling_products(
         GuestSaleItem, GuestSaleItem.produto_id == Produto.id
     ).join(
         GuestSale, GuestSale.id == GuestSaleItem.sale_id
-    ).filter(and_(*guest_filter)).group_by(Produto.id).all()
+    ).filter(and_(*guest_filter)).group_by(Produto.id, Produto.nome).all()
 
     products = {}
     for row in regular:
@@ -162,7 +163,8 @@ def get_top_selling_products(
             "num_sales": row.num_sales or 0,
         }
     for row in guest:
-        entry = products.setdefault(row.id, {"nome": None, "quantity": 0, "revenue": 0.0, "num_sales": 0})
+        # Produto vendido só em venda avulsa ainda não está na lista: entra com o nome
+        entry = products.setdefault(row.id, {"nome": row.nome, "quantity": 0, "revenue": 0.0, "num_sales": 0})
         entry["quantity"] += row.quantity or 0
         entry["revenue"] += float(row.revenue or 0)
         entry["num_sales"] += row.num_sales or 0

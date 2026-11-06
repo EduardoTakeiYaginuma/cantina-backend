@@ -14,6 +14,7 @@ from sqlalchemy import (
     Text,
     Enum,
     JSON,
+    Index,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -31,6 +32,12 @@ class UserRole(str, enum.Enum):
     OPERADOR = "operador"
 
 
+class EventoTipo(str, enum.Enum):
+    """Tipo do evento"""
+    ACAMPAMENTO = "acampamento"   # temporadas: só a equipe pode ficar com saldo negativo
+    GENERICO = "generico"         # qualquer cliente pode ficar com saldo negativo
+
+
 class CustomerTipo(str, enum.Enum):
     """Tipos de COMPRADORES"""
     ACAMPANTE = "acampante"
@@ -45,6 +52,8 @@ class SystemUser(Base):
     __tablename__ = "system_users"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Evento do perfil. Vazio = perfil global (entra em qualquer evento, ex.: admin padrão)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
     username = Column(String(255), unique=True, index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
     role = Column(Enum(UserRole), default=UserRole.OPERADOR, nullable=False)
@@ -55,6 +64,11 @@ class SystemUser(Base):
     created_by_id = Column(Integer, ForeignKey("system_users.id"))
     updated_at = Column(DateTime, onupdate=lambda: datetime.now())
     updated_by_id = Column(Integer, ForeignKey("system_users.id"))
+
+    @property
+    def is_global(self) -> bool:
+        """Perfil sem evento: entra em qualquer evento"""
+        return self.evento_id is None
 
     # Relacionamentos reversos (especificando foreign_keys para evitar ambiguidade)
     sales_created = relationship("Sale", foreign_keys="Sale.created_by_id", back_populates="created_by")
@@ -78,6 +92,30 @@ class UserSession(Base):
 
 
 # ============================================
+# TABELA: Pessoas (a mesma pessoa em vários eventos)
+# ============================================
+
+class Pessoa(Base):
+    """
+    Quem a pessoa é, em todos os eventos. Cada evento tem o próprio cadastro de cliente
+    (saldo, quarto, semana, vendas), que aponta para a pessoa.
+    Guarda os dados mais recentes do cadastro (nome, pais, contato, foto).
+    """
+    __tablename__ = "pessoas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nome = Column(String(255), nullable=False)
+    nome_pai = Column(String(255))
+    nome_mae = Column(String(255))
+    informacoes_contato = Column(String(500))
+    foto = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now())
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+
+    clientes = relationship("Customers", back_populates="pessoa")
+
+
+# ============================================
 # TABELA 2: Clientes/Compradores
 # ============================================
 
@@ -86,8 +124,11 @@ class Customers(Base):
     __tablename__ = "customers"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Evento a que o registro pertence (cada evento tem dados próprios)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
     nome = Column(String(255), nullable=False)
-    nickname = Column(String(255), unique=True, index=True, nullable=False)
+    # Apelido é único dentro do evento (o mesmo apelido pode existir em outro evento)
+    nickname = Column(String(255), index=True, nullable=False)
     quarto = Column(String(100))
     saldo = Column(Float, default=0.0)
     tipo = Column(Enum(CustomerTipo), default=CustomerTipo.ACAMPANTE, nullable=False)
@@ -102,6 +143,9 @@ class Customers(Base):
     # Foto do cliente (data URL de imagem pequena); None = mostra as iniciais
     foto = Column(Text, nullable=True)
 
+    # A mesma pessoa em outros eventos (uma vez por evento)
+    pessoa_id = Column(Integer, ForeignKey("pessoas.id"), nullable=True, index=True)
+
     # Campos de auditoria
     created_at = Column(DateTime, default=lambda: datetime.now())
     created_by_id = Column(Integer, ForeignKey("system_users.id"))
@@ -111,13 +155,24 @@ class Customers(Base):
     # Relationships
     sales = relationship("Sale", back_populates="customer")
     balance_transactions = relationship("BalanceTransaction", back_populates="customer")
+    pessoa = relationship("Pessoa", back_populates="clientes")
     created_by = relationship("SystemUser", foreign_keys=lambda: [Customers.created_by_id], backref="customers_created")
     updated_by = relationship("SystemUser", foreign_keys=lambda: [Customers.updated_by_id], backref="customers_updated")
 
-    @hybrid_property
+    __table_args__ = (
+        Index("uq_customers_evento_nickname", "evento_id", "nickname", unique=True),
+        Index("uq_customers_evento_pessoa", "evento_id", "pessoa_id", unique=True),
+    )
+
+    # Evento do cliente (para saber o tipo do evento)
+    evento = relationship("EventConfig", foreign_keys=[evento_id], viewonly=True)
+
+    @property
     def allow_negative_balance(self) -> bool:
-        """Verifica se o usuário pode ter saldo negativo"""
-        return self.tipo == CustomerTipo.EQUIPE
+        """Pode ficar com saldo negativo: equipe, ou qualquer cliente de evento genérico"""
+        if self.tipo == CustomerTipo.EQUIPE:
+            return True
+        return self.evento is not None and self.evento.tipo == EventoTipo.GENERICO.value
 
     def can_purchase(self, amount: float) -> bool:
         """Verifica se pode realizar uma compra"""
@@ -134,6 +189,8 @@ class Produto(Base):
     __tablename__ = "produtos"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Evento a que o registro pertence (cada evento tem dados próprios)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
     nome = Column(String(255), nullable=False)
     valor = Column(Float, nullable=False)
     estoque = Column(Integer, default=0)
@@ -168,11 +225,16 @@ class ProdutoGrupo(Base):
     __tablename__ = "produto_grupos"
 
     id = Column(Integer, primary_key=True, index=True)
-    nome = Column(String(255), nullable=False, unique=True)
+    # Evento a que o registro pertence (cada evento tem dados próprios)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
+    nome = Column(String(255), nullable=False)
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
 
     produtos = relationship("Produto", back_populates="grupo")
+
+    # Nome do grupo é único dentro do evento
+    __table_args__ = (Index("uq_produto_grupos_evento_nome", "evento_id", "nome", unique=True),)
 
 
 # ============================================
@@ -183,6 +245,8 @@ class Sale(Base):
     __tablename__ = "sales"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Evento a que o registro pertence (cada evento tem dados próprios)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
     total_amount = Column(Float, nullable=False)
@@ -212,6 +276,8 @@ class SaleItem(Base):
     __tablename__ = "sale_items"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Evento a que o registro pertence (cada evento tem dados próprios)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
     sale_id = Column(Integer, ForeignKey("sales.id"), nullable=False)
     produto_id = Column(Integer, ForeignKey("produtos.id"), nullable=False)
     quantity = Column(Integer, nullable=False)
@@ -231,6 +297,8 @@ class Restock(Base):
     __tablename__ = "restocks"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Evento a que o registro pertence (cada evento tem dados próprios)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
     produto_id = Column(Integer, ForeignKey("produtos.id"), nullable=False)
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     quantity = Column(Integer, nullable=False)
@@ -249,6 +317,8 @@ class BalanceTransaction(Base):
     __tablename__ = "balance_transactions"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Evento a que o registro pertence (cada evento tem dados próprios)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
     amount = Column(Float, nullable=False)
@@ -269,6 +339,8 @@ class GuestSale(Base):
     __tablename__ = "guest_sales"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Evento a que o registro pertence (cada evento tem dados próprios)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
     guest_name = Column(String(255), nullable=True)
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     total_amount = Column(Float, nullable=False)
@@ -293,6 +365,8 @@ class GuestSaleItem(Base):
     __tablename__ = "guest_sale_items"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Evento a que o registro pertence (cada evento tem dados próprios)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
     sale_id = Column(Integer, ForeignKey("guest_sales.id"), nullable=False)
     produto_id = Column(Integer, ForeignKey("produtos.id"), nullable=False)
     quantity = Column(Integer, nullable=False)
@@ -311,6 +385,8 @@ class ProductImportBatch(Base):
     __tablename__ = "product_import_batches"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Evento a que o registro pertence (cada evento tem dados próprios)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
     filename = Column(String(255), nullable=False)
     imported_count = Column(Integer, default=0)
     skipped_count = Column(Integer, default=0)
@@ -345,6 +421,8 @@ class CustomerImportBatch(Base):
     __tablename__ = "customer_import_batches"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Evento a que o registro pertence (cada evento tem dados próprios)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
     filename = Column(String(255), nullable=False)
     imported_count = Column(Integer, default=0)
     skipped_count = Column(Integer, default=0)
@@ -375,8 +453,13 @@ class CustomerImportBatchItem(Base):
 # TABELA: Configuração do Evento (nome, semanas e quartos)
 # ============================================
 
-def default_week_name(week: int) -> str:
-    """Nome padrão: a primeira semana é a da equipe; as seguintes são "Semana 1", "Semana 2"..."""
+def default_week_name(week: int, tipo: str = "acampamento") -> str:
+    """
+    Nome padrão. Acampamento: a primeira semana é a da equipe ("Equipe", "Semana 1", "Semana 2"...).
+    Evento genérico: não há equipe ("Semana 1", "Semana 2"...).
+    """
+    if tipo == EventoTipo.GENERICO.value:
+        return f"Semana {week}"
     return "Equipe" if week == 1 else f"Semana {week - 1}"
 
 
@@ -385,10 +468,12 @@ class EventConfig(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     event_name = Column(String(255), nullable=False)
+    # "acampamento" (temporadas) ou "generico" (todos os clientes podem ficar negativos)
+    tipo = Column(String(20), default=EventoTipo.ACAMPAMENTO.value, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False, index=True)
     num_semanas = Column(Integer, default=3, nullable=False)
     semana_atual = Column(Integer, default=1, nullable=False)
-    # Nomes das semanas (lista JSON). Vazio = padrão: "Equipe", "Semana 1", "Semana 2"...
+    # Nomes das semanas (lista JSON). Vazio = padrão: "Equipe", "Semana 1"... (genérico: "Semana 1", "Semana 2"...)
     semanas_nomes_raw = Column("semanas_nomes", JSON, nullable=True)
 
     created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
@@ -403,7 +488,7 @@ class EventConfig(Base):
         names = []
         for i in range(1, (self.num_semanas or 0) + 1):
             name = raw[i - 1].strip() if i - 1 < len(raw) and isinstance(raw[i - 1], str) else ""
-            names.append(name or default_week_name(i))
+            names.append(name or default_week_name(i, self.tipo))
         return names
 
     rooms = relationship(
@@ -428,6 +513,38 @@ class EventRoom(Base):
     created_at = Column(DateTime, default=lambda: datetime.now())
 
     event_config = relationship("EventConfig", back_populates="rooms")
+
+
+# ============================================
+# TABELA: Cobranças Pix (QR estático com valor)
+# ============================================
+
+class PixCobranca(Base):
+    """
+    Um QR Pix gerado pelo sistema. O pagamento é conferido no app do banco e confirmado
+    à mão: com cliente, a confirmação vira crédito no saldo; sem cliente, é de uma venda avulsa.
+    """
+    __tablename__ = "pix_cobrancas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    valor = Column(Float, nullable=False)
+    txid = Column(String(25), nullable=False)
+    payload = Column(Text, nullable=False)
+    descricao = Column(String(255), nullable=True)
+    status = Column(String(20), default="pendente", nullable=False, index=True)  # pendente | confirmada | cancelada
+
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now())
+    resolved_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
+    balance_transaction_id = Column(Integer, ForeignKey("balance_transactions.id"), nullable=True)
+    guest_sale_id = Column(Integer, ForeignKey("guest_sales.id"), nullable=True)
+
+    customer = relationship("Customers")
+    created_by = relationship("SystemUser", foreign_keys=[created_by_id])
+    resolved_by = relationship("SystemUser", foreign_keys=[resolved_by_id])
 
 
 # ============================================

@@ -12,6 +12,7 @@ from app.models import SystemUser, UserRole, UserSession
 from app.repositories import SystemUserRepository
 from app.services.audit import AuditService, get_changed_fields
 from app.models_audit import AuditAction
+from app.core.event_scope import scoped_event_id
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -45,7 +46,8 @@ def register_user(
         username=user.username,
         hashed_password=hashed_password,
         role=user.role or UserRole.OPERADOR,
-        created_by_id=current_admin.id  # ← Registra quem criou
+        created_by_id=current_admin.id,  # ← Registra quem criou
+        evento_id=None if user.is_global else scoped_event_id(db),
     )
 
     # 🆕 AUDITORIA: Registrar criação
@@ -56,7 +58,8 @@ def register_user(
         created_by_id=current_admin.id,
         new_values={
             "username": db_user.username,
-            "role": db_user.role.value
+            "role": db_user.role.value,
+            "global": db_user.is_global,
         },
         description=f"Usuário criado por {current_admin.username}"
     )
@@ -204,6 +207,7 @@ _PERMANENT_HISTORY = {
     "customer_audit_logs": "registro(s) de auditoria de clientes",
     "product_audit_logs": "registro(s) de auditoria de produtos",
     "system_user_audit_logs": "registro(s) de auditoria de usuários",
+    "pix_cobrancas": "cobrança(s) Pix",
 }
 
 
@@ -360,6 +364,47 @@ def change_user_role(
     )
 
     return {"message": "User role changed successfully"}
+
+@router.put("/users/{user_id}/global")
+def change_user_global(
+        user_id: int,
+        data: schemas.GlobalChange,
+        db: Session = Depends(get_db),
+        current_admin: SystemUser = Depends(get_current_active_admin)
+):
+    """
+    Torna o perfil global (entra em qualquer evento) ou o prende ao evento ativo.
+    Apenas administradores.
+    """
+    from datetime import datetime
+
+    user = SystemUserRepository(db).get_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    evento_id = scoped_event_id(db)
+    if not data.is_global and evento_id is None:
+        raise HTTPException(status_code=400, detail="Não há evento ativo para prender o perfil.")
+    if user.id == current_admin.id and not data.is_global:
+        raise HTTPException(status_code=400, detail="Você não pode tirar o acesso global do seu próprio perfil.")
+
+    old_global = user.is_global
+    user.evento_id = None if data.is_global else evento_id
+    user.updated_by_id = current_admin.id
+    user.updated_at = datetime.now()
+    db.commit()
+    db.refresh(user)
+
+    AuditService(db).log_user_action(
+        user_id=user_id,
+        action=AuditAction.UPDATE,
+        created_by_id=current_admin.id,
+        old_values={"global": old_global},
+        new_values={"global": user.is_global},
+        description=(f"Perfil {'global' if user.is_global else 'preso ao evento ativo'} "
+                     f"por {current_admin.username}"),
+    )
+    return {"message": "Perfil atualizado", "is_global": user.is_global}
+
 
 @router.put("/users/{user_id}/password")
 def admin_change_user_password(

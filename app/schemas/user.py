@@ -27,6 +27,8 @@ class SystemUserCreate(SystemUserBase):
     """Schema para criar SystemUser"""
     password: str = Field(..., min_length=6)
     role: Optional[UserRole] = UserRole.OPERADOR
+    # Global = entra em qualquer evento. Senão, o perfil pertence ao evento ativo.
+    is_global: bool = False
 
 
 class SystemUserResponse(SystemUserBase):
@@ -35,6 +37,8 @@ class SystemUserResponse(SystemUserBase):
     role: UserRole
     is_active: bool
     created_at: datetime
+    evento_id: Optional[int] = None
+    is_global: bool = False
 
     class Config:
         from_attributes = True
@@ -49,6 +53,11 @@ class PasswordChange(BaseModel):
 class AdminPasswordChange(BaseModel):
     """Schema para admin trocar senha de outro usuário"""
     new_password: str = Field(..., min_length=6)
+
+
+class GlobalChange(BaseModel):
+    """Perfil global (entra em qualquer evento) ou só do evento ativo"""
+    is_global: bool
 
 
 class RoleChange(BaseModel):

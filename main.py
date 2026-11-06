@@ -15,32 +15,9 @@ from app.core.exceptions import register_exception_handlers
 from app.repositories import SystemUserRepository
 from app.api.v1 import api_router as api_v1_router
 
+from app.core.schema_migrations import run_migrations as _run_migrations, EVENT_SCOPED_TABLES  # noqa: F401
+
 load_dotenv()
-
-
-# ============================================
-# Migrações de Schema
-# ============================================
-
-def _run_migrations(db_engine):
-    """Aplica colunas novas em bancos já existentes (ALTER TABLE idempotente)."""
-    migrations = [
-        ("customers", "informacoes_contato", "VARCHAR(500)"),
-    ]
-    with db_engine.connect() as conn:
-        for table, column, col_type in migrations:
-            result = conn.execute(
-                sqlalchemy.text(f"PRAGMA table_info({table})")
-            )
-            existing_columns = [row[1] for row in result]
-            if column not in existing_columns:
-                conn.execute(
-                    sqlalchemy.text(
-                        f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"
-                    )
-                )
-                conn.commit()
-                print(f"✅ Migration: coluna '{column}' adicionada em '{table}'")
 
 
 # ============================================
@@ -61,6 +38,16 @@ async def lifespan(app: FastAPI):
 
     # Migrações manuais para colunas adicionadas após criação inicial do banco
     _run_migrations(engine)
+
+    # Nome de acesso na rede local (ex.: http://cantina.local:8080)
+    from app.api.v1.endpoints.settings import start_hostname_announcer
+    await start_hostname_announcer()
+
+    # Conversão única dos horários antigos (UTC) para o horário local
+    from app.core.timezone_migration import convert_utc_timestamps_to_local
+    converted = convert_utc_timestamps_to_local(engine, models.Base.metadata)
+    if converted:
+        print(f"✅ Migration: {converted} horário(s) convertidos de UTC para horário local")
 
     # Criar usuário admin padrão
     db = next(get_db())
@@ -86,12 +73,34 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
+    # Clientes padrão da equipe (com foto)
+    db = next(get_db())
+    try:
+        from app.services.default_customers import ensure_default_customers
+        from app.core.event_scope import set_event_scope
+        # Banco antigo com clientes ainda sem evento (rodar scripts/isolar_eventos.py):
+        # não cria os padrões, senão duplicaria os que já existem sem evento
+        legacy = db.query(models.Customers.id).filter(models.Customers.evento_id.is_(None)).first()
+        if legacy:
+            raise RuntimeError("há clientes sem evento; rode scripts/isolar_eventos.py \"<nome do evento>\"")
+        set_event_scope(db)  # clientes padrão entram no evento ativo
+        admin = SystemUserRepository(db).get_by_username("admin")
+        for msg in ensure_default_customers(db, created_by_id=admin.id if admin else None):
+            print(f"✅ Cliente padrão {msg}")
+    except Exception as e:
+        print(f"❌ Erro ao criar clientes padrão: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
     print("🎉 Application startup complete!\n")
 
     # Aplicação está rodando aqui (yield separa startup de shutdown)
     yield
 
     # SHUTDOWN - Executado ao parar a aplicação
+    from app.services.local_hostname import announcer
+    await announcer.stop()
     print("\n👋 Shutting down Cantina Swift Flow API...")
     print("✅ Cleanup completed")
 

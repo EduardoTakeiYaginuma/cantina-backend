@@ -26,8 +26,12 @@ Base = declarative_base()
 
 
 def get_db():
+    """Sessão de uma requisição, presa ao evento ativo (ver app/core/event_scope.py)."""
+    from app.core.event_scope import set_event_scope
+
     db = SessionLocal()
     try:
+        set_event_scope(db)
         yield db
     finally:
         db.close()

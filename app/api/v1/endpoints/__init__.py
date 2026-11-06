@@ -17,6 +17,8 @@ from .event_config import router as event_config_router
 from .exports import router as exports_router
 from .settings import router as settings_router
 from .produto_grupos import router as produto_grupos_router
+from .pessoas import router as pessoas_router
+from .pix import router as pix_router
 
 __all__ = [
     "auth_router",
@@ -33,4 +35,6 @@ __all__ = [
     "exports_router",
     "settings_router",
     "produto_grupos_router",
+    "pessoas_router",
+    "pix_router",
 ]
