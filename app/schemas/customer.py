@@ -67,6 +67,7 @@ class CustomerSalesSummary(BaseModel):
     customer_nome: str
     tipo: str
     saldo_atual: float
+    total_creditado: float = 0.0
     total_vendas: int
     total_gasto: float
     gasto_medio: float

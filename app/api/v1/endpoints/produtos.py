@@ -20,9 +20,12 @@ from app.core.dependencies import get_current_user, get_current_active_admin
 from app.repositories import ProdutoRepository
 from app.models import (
     SystemUser, Produto, ProdutoGrupo, SaleItem, GuestSaleItem, Restock, ProductImportBatch,
-    ProductImportBatchItem,
+    ProductImportBatchItem, ContagemEstoque,
 )
 from app import schemas
+from app.schemas.product import (
+    ContagemCreate, ContagemOut, ContagemResponse, EstoqueNaoContadoUpdate,
+)
 from app.services.audit import AuditService, get_changed_fields
 from app.models_audit import AuditAction, ProductAuditLog
 
@@ -55,6 +58,8 @@ def create_produto(
         valor=produto.valor,
         estoque=produto.estoque or 0,
         estoque_minimo=produto.estoque_minimo or 10,
+        # Estoque em branco = ainda não contado
+        estoque_contado=(produto.estoque is not None) if produto.estoque_contado is None else produto.estoque_contado,
         created_by_id=current_user.id  # ← Registra quem criou
     )
 
@@ -70,12 +75,159 @@ def create_produto(
             "nome": created_produto.nome,
             "valor": created_produto.valor,
             "estoque": created_produto.estoque,
-            "estoque_minimo": created_produto.estoque_minimo
+            "estoque_minimo": created_produto.estoque_minimo,
+            "estoque_contado": created_produto.estoque_contado,
         },
         description=f"Produto criado por {current_user.username}"
     )
 
     return created_produto
+
+
+# ============================================
+# Contagem de estoque (rotas fixas: precisam vir antes das rotas "/{produto_id}")
+# ============================================
+
+def _contagem_out(c: ContagemEstoque) -> ContagemOut:
+    return ContagemOut(
+        id=c.id,
+        produto_id=c.produto_id,
+        produto_nome=c.produto.nome if c.produto else None,
+        quantidade_esperada=c.quantidade_esperada,
+        quantidade_contada=c.quantidade_contada,
+        diferenca=c.diferenca,
+        estava_contado=c.estava_contado,
+        observacao=c.observacao,
+        created_at=c.created_at,
+        created_by_nome=c.created_by.username if c.created_by else None,
+    )
+
+
+def _movimento_do_evento(db: Session, produto_id: int) -> int:
+    """Reposições − vendas (clientes e avulsas, não canceladas) do produto no evento ativo."""
+    from app.models import Restock, Sale, SaleItem, GuestSale, GuestSaleItem
+    reposto = db.query(func.coalesce(func.sum(Restock.quantity), 0)).filter(Restock.produto_id == produto_id).scalar()
+    vendido = (db.query(func.coalesce(func.sum(SaleItem.quantity), 0))
+               .join(Sale, Sale.id == SaleItem.sale_id)
+               .filter(SaleItem.produto_id == produto_id, Sale.is_cancelled == False).scalar())
+    avulso = (db.query(func.coalesce(func.sum(GuestSaleItem.quantity), 0))
+              .join(GuestSale, GuestSale.id == GuestSaleItem.sale_id)
+              .filter(GuestSaleItem.produto_id == produto_id, GuestSale.is_cancelled == False).scalar())
+    return int(reposto or 0) - int(vendido or 0) - int(avulso or 0)
+
+
+@router.post("/contagem", response_model=ContagemResponse)
+def registrar_contagem(
+        data: ContagemCreate,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """Registra a contagem física de vários produtos de uma vez e passa a considerá-los contados."""
+    produto_ids = [i.produto_id for i in data.itens]
+    if len(set(produto_ids)) != len(produto_ids):
+        raise HTTPException(status_code=400, detail="Há produtos repetidos na contagem")
+    produtos = {p.id: p for p in db.query(Produto).filter(Produto.id.in_(produto_ids)).all()}
+    faltando = [pid for pid in produto_ids if pid not in produtos]
+    if faltando:
+        raise HTTPException(status_code=404, detail=f"Produto ID {faltando[0]} não encontrado")
+
+    observacao = (data.observacao or "").strip() or None
+    agora = datetime.now()
+    audit = AuditService(db)
+    contagens = []
+    for item in data.itens:
+        produto = produtos[item.produto_id]
+        estava_contado = bool(produto.estoque_contado)
+        esperada = (produto.estoque or 0) if estava_contado else None
+        quantidade = item.quantidade
+        nota = observacao
+        if item.modo == "inicial":
+            # Quantidade do começo do evento: + reposições − vendidos (vendas não canceladas)
+            movimento = _movimento_do_evento(db, produto.id)
+            quantidade = item.quantidade + movimento
+            detalhe = f"Quantidade inicial {item.quantidade}, movimento no evento {movimento:+d}"
+            nota = f"{detalhe}. {observacao}" if observacao else detalhe
+        diferenca = quantidade - esperada if esperada is not None else None
+
+        contagem = ContagemEstoque(
+            produto_id=produto.id,
+            created_by_id=current_user.id,
+            quantidade_esperada=esperada,
+            quantidade_contada=quantidade,
+            diferenca=diferenca,
+            estava_contado=estava_contado,
+            observacao=nota,
+            created_at=agora,
+        )
+        db.add(contagem)
+        contagens.append(contagem)
+
+        old_values = {"estoque": produto.estoque, "estoque_contado": estava_contado}
+        produto.estoque = quantidade
+        produto.estoque_contado = True
+        produto.ultima_contagem_em = agora
+        produto.updated_by_id = current_user.id
+        produto.updated_at = agora
+
+        audit.log_product_action(
+            produto_id=produto.id,
+            action=AuditAction.UPDATE,
+            created_by_id=current_user.id,
+            old_values=old_values,
+            new_values={"estoque": quantidade, "estoque_contado": True},
+            description=f"Contagem de estoque por {current_user.username}"
+                        + (f" (diferença: {diferenca:+d})" if diferenca is not None else " (estoque estava não contado)")
+        )
+
+    db.commit()
+    for c in contagens:
+        db.refresh(c)
+    return {"registradas": len(contagens), "contagens": [_contagem_out(c) for c in contagens]}
+
+
+@router.get("/contagem", response_model=List[ContagemOut])
+def listar_contagens(
+        produto_id: Optional[int] = Query(None),
+        limit: int = Query(100, ge=1, le=1000),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """Histórico de contagens de estoque (mais recentes primeiro)."""
+    query = db.query(ContagemEstoque)
+    if produto_id is not None:
+        query = query.filter(ContagemEstoque.produto_id == produto_id)
+    rows = query.order_by(ContagemEstoque.created_at.desc(), ContagemEstoque.id.desc()).limit(limit).all()
+    return [_contagem_out(c) for c in rows]
+
+
+@router.post("/estoque-nao-contado")
+def marcar_estoque_nao_contado(
+        data: EstoqueNaoContadoUpdate,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """Marca (ou desmarca) vários produtos como estoque "não contado"."""
+    produtos = db.query(Produto).filter(Produto.id.in_(data.produto_ids)).all() if data.produto_ids else []
+    audit = AuditService(db)
+    atualizados = 0
+    for produto in produtos:
+        if bool(produto.estoque_contado) == data.estoque_contado:
+            continue
+        produto.estoque_contado = data.estoque_contado
+        produto.updated_by_id = current_user.id
+        produto.updated_at = datetime.now()
+        atualizados += 1
+        audit.log_product_action(
+            produto_id=produto.id,
+            action=AuditAction.UPDATE,
+            created_by_id=current_user.id,
+            old_values={"estoque_contado": not data.estoque_contado},
+            new_values={"estoque_contado": data.estoque_contado},
+            description=f"Estoque marcado como {'contado' if data.estoque_contado else 'não contado'} "
+                        f"por {current_user.username}"
+        )
+    db.commit()
+    return {"atualizados": atualizados}
 
 
 @router.get("", response_model=List[schemas.ProdutoResponse])
@@ -153,7 +305,7 @@ def update_produto(
 
     # 🆕 AUDITORIA: Detectar mudanças
     update_data = {k: v for k, v in produto_update.model_dump(exclude_unset=True).items()
-                   if not (k == "variante" and v is None)}
+                   if not (k == "variante" and v is None) and not (k == "estoque_contado" and v is None)}
     if produto.grupo_id and produto_update.nome:
         update_data["nome"] = produto_update.nome
     old_values, new_values = get_changed_fields(produto, update_data)
@@ -465,7 +617,8 @@ def get_low_stock_produtos(
     else:
         # Usa o estoque_minimo de cada produto
         return db.query(Produto).filter(
-            Produto.estoque <= Produto.estoque_minimo
+            Produto.estoque <= Produto.estoque_minimo,
+            Produto.estoque_contado == True  # noqa: E712
         ).all()
 
 
@@ -478,7 +631,8 @@ def get_produtos_summary(
     total_produtos = db.query(func.count(Produto.id)).scalar()
     produtos_ativos = db.query(func.count(Produto.id)).filter(Produto.is_active == True).scalar()
     produtos_estoque_baixo = db.query(func.count(Produto.id)).filter(
-        Produto.estoque <= Produto.estoque_minimo
+        Produto.estoque <= Produto.estoque_minimo,
+        Produto.estoque_contado == True  # noqa: E712
     ).scalar()
     valor_total_estoque = db.query(func.sum(Produto.valor * Produto.estoque)).scalar()
 
@@ -501,9 +655,14 @@ PRODUCT_COLS = [
     Col("Preço (R$)", 14, required=True, kind="money", example="5,50",
         note="Preço de venda. Número maior que zero. Em produto com sabores, se ficar em branco usa o "
              "preço do sabor anterior do mesmo produto."),
-    Col("Estoque", 12, kind="int", example="100", note="Quantidade inicial em estoque. Em branco = 0."),
+    Col("Estoque", 12, kind="int", example="100",
+        note="Quantidade inicial em estoque. Em branco = estoque 0 e produto \"não contado\" "
+             "(vende sem travar por falta de estoque até a primeira contagem)."),
     Col("Estoque mínimo", 16, kind="int", example="10",
         note="Abaixo disso o produto aparece como estoque baixo. Em branco = 10."),
+    Col("Contado", 12, example="S", options=["S", "N"],
+        note="S = o estoque informado foi contado. N = estoque não contado (vende sem validar estoque e "
+             "não gera alerta de estoque baixo). Em branco = S quando há estoque, N quando o estoque está em branco."),
 ]
 PRODUCT_ALIASES = {
     "nome": ["nome", "produto", "nome do produto", "nome produto"],
@@ -511,7 +670,24 @@ PRODUCT_ALIASES = {
     "valor": ["valor", "preco", "preco de venda"],
     "estoque": ["estoque", "estoque inicial", "quantidade"],
     "estoque_minimo": ["estoque minimo", "estoque min", "minimo"],
+    "contado": ["contado", "estoque contado"],
 }
+
+
+def _parse_contado(value) -> Optional[bool]:
+    """S/N (sim/não, 1/0, true/false). Vazio ou irreconhecível = None."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("s", "sim", "1", "true", "verdadeiro", "x", "y", "yes"):
+        return True
+    if text in ("n", "nao", "não", "0", "false", "falso", "no"):
+        return False
+    return None
+
+
 # Planilha antiga, sem cabeçalho reconhecível: nome, valor, estoque, estoque_minimo
 PRODUCT_LEGACY = {"nome": 0, "valor": 1, "estoque": 2, "estoque_minimo": 3}
 
@@ -585,15 +761,18 @@ def download_product_template(
             "Exemplo",
             PRODUCT_COLS,
             [
-                ["Coca-Cola", "", 5.00, 100, 10],
-                ["Água", "", 3.00, 80, 10],
-                ["KitKat", "Morango", 4.50, 30, 5],
-                ["KitKat", "Ao leite", 4.50, 30, 5],
-                ["KitKat", "Branco", "", 20, 5],
+                ["Coca-Cola", "", 5.00, 100, 10, "S"],
+                ["Água", "", 3.00, 80, 10, "S"],
+                ["KitKat", "Morango", 4.50, 30, 5, "S"],
+                ["KitKat", "Ao leite", 4.50, 30, 5, "S"],
+                ["KitKat", "Branco", "", "", 5, "N"],
             ],
-            note="O KitKat vira um produto com 3 sabores; o Branco usa o preço do sabor de cima (R$ 4,50).",
+            note="O KitKat vira um produto com 3 sabores; o Branco usa o preço do sabor de cima (R$ 4,50) "
+                 "e fica com estoque não contado.",
         )],
         [
+            "Estoque em branco = estoque 0 e produto \"não contado\": vende sem validar estoque (o estoque "
+            "pode ficar negativo) e não aparece nos alertas de estoque baixo, até a primeira contagem.",
             "Os sabores de um produto que já existe no sistema entram nele (ex.: um sabor novo de KitKat).",
             "Preço pode ser escrito como 5, 5,50 ou R$ 5,50.",
             "Se algo der errado, a importação pode ser desfeita no histórico de importações.",
@@ -695,6 +874,11 @@ def import_products_from_excel(
             error_count += 1
             continue
 
+        # Estoque em branco = não contado; a coluna "Contado" (S/N), se preenchida, decide
+        contado = _parse_contado(_cell(row, cols, "contado"))
+        if contado is None:
+            contado = estoque is not None
+
         grupo = None
         if sabor:
             grupo = find_group(nome)
@@ -731,6 +915,7 @@ def import_products_from_excel(
             estoque_minimo=max(0, estoque_minimo if estoque_minimo is not None else 10),
             grupo_id=grupo.id if grupo is not None else None,
             variante=sabor or None,
+            estoque_contado=contado,
             created_by_id=current_user.id
         )
         db.add(db_produto)
@@ -745,6 +930,7 @@ def import_products_from_excel(
             action=AuditAction.CREATE,
             created_by_id=current_user.id,
             new_values={"nome": db_produto.nome, "valor": db_produto.valor, "estoque": db_produto.estoque,
+                        "estoque_contado": db_produto.estoque_contado,
                         **({"grupo": grupo.nome, "variante": sabor} if grupo is not None else {})},
             description=f"Produto importado via Excel por {current_user.username}"
         )

@@ -69,7 +69,8 @@ def create_sale(
                 )
 
             # Validar estoque
-            if produto.estoque < item.quantity:
+            # (produto com estoque "não contado" vende sem validar e pode ficar negativo)
+            if produto.estoque_contado and produto.estoque < item.quantity:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Estoque insuficiente para '{produto.nome}'. Disponível: {produto.estoque}"

@@ -27,7 +27,8 @@ class ProdutoRepository(BaseRepository[Produto]):
     def get_low_stock(self, threshold: int = 10) -> List[Produto]:
         """Busca produtos com estoque baixo"""
         return self.db.query(self.model).filter(
-            self.model.estoque <= threshold
+            self.model.estoque <= threshold,
+            self.model.estoque_contado == True  # noqa: E712
         ).all()
 
     def get_active_products(self) -> List[Produto]:

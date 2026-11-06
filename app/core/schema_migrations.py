@@ -20,6 +20,8 @@ def run_migrations(db_engine):
         ("produtos", "variante", "VARCHAR(100)"),
         ("customers", "foto", "TEXT"),
         ("event_configs", "tipo", "VARCHAR(20) NOT NULL DEFAULT 'acampamento'"),
+        ("produtos", "estoque_contado", "BOOLEAN NOT NULL DEFAULT 1"),
+        ("produtos", "ultima_contagem_em", "DATETIME"),
     ]
     with db_engine.connect() as conn:
         for table, column, col_type in migrations:
@@ -36,6 +38,10 @@ def run_migrations(db_engine):
                 conn.commit()
                 print(f"✅ Migration: coluna '{column}' adicionada em '{table}'")
 
+    # Tabelas novas (idempotente: só cria se não existir)
+    from app.models import ContagemEstoque
+    ContagemEstoque.__table__.create(bind=db_engine, checkfirst=True)
+
     _migrate_event_scope(db_engine)
     migrate_pessoas(db_engine)
 
@@ -46,7 +52,7 @@ EVENT_SCOPED_TABLES = [
     "guest_sales", "guest_sale_items", "restocks", "balance_transactions",
     "product_import_batches", "customer_import_batches",
     "customer_audit_logs", "product_audit_logs", "system_user_audit_logs", "sale_audit_logs",
-    "pix_cobrancas",
+    "pix_cobrancas", "contagens_estoque",
 ]
 
 

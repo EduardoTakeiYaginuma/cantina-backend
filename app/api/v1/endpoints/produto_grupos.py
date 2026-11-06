@@ -57,7 +57,8 @@ def _create_variant(db: Session, audit: AuditService, grupo: ProdutoGrupo, varia
     nome = _variant_name(grupo.nome, variante)
     _check_product_name_free(db, nome)
     produto = Produto(
-        nome=nome, valor=valor, estoque=estoque, estoque_minimo=estoque_minimo,
+        nome=nome, valor=valor, estoque=estoque or 0, estoque_minimo=estoque_minimo,
+        estoque_contado=estoque is not None,
         grupo_id=grupo.id, variante=variante.strip(), created_by_id=user.id,
     )
     db.add(produto)

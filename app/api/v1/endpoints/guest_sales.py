@@ -31,7 +31,8 @@ def create_guest_sale(
             raise HTTPException(status_code=404, detail=f"Produto ID {item.produto_id} não encontrado")
         if not produto.is_active:
             raise HTTPException(status_code=400, detail=f"Produto '{produto.nome}' está desativado")
-        if produto.estoque < item.quantity:
+        # Produto com estoque "não contado" vende sem validar (o estoque pode ficar negativo)
+        if produto.estoque_contado and produto.estoque < item.quantity:
             raise HTTPException(
                 status_code=400,
                 detail=f"Estoque insuficiente para '{produto.nome}'. Disponível: {produto.estoque}"

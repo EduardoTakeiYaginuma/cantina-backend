@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, with_loader_criteria
 from app.models import (
     SystemUser, Customers, Produto, ProdutoGrupo, Sale, SaleItem, GuestSale, GuestSaleItem,
     Restock, BalanceTransaction, ProductImportBatch, CustomerImportBatch, EventConfig, PixCobranca,
+    ContagemEstoque,
 )
 from app.models_audit import CustomerAuditLog, ProductAuditLog, SystemUserAuditLog, SaleAuditLog
 
@@ -29,6 +30,7 @@ EVENT_SCOPED_MODELS = (
     Customers, Produto, ProdutoGrupo, Sale, SaleItem, GuestSale, GuestSaleItem,
     Restock, BalanceTransaction, ProductImportBatch, CustomerImportBatch,
     CustomerAuditLog, ProductAuditLog, SystemUserAuditLog, SaleAuditLog, PixCobranca,
+    ContagemEstoque,
 )
 
 

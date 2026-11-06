@@ -3,6 +3,7 @@
 API v1 - Registra todos os routers dos endpoints.
 """
 from fastapi import APIRouter
+from .endpoints.relatorios_evento import router as relatorios_evento_router
 from .endpoints import (
     auth_router,
     customers_router,
@@ -42,4 +43,5 @@ api_router.include_router(settings_router, tags=["settings"])
 api_router.include_router(produto_grupos_router, tags=["produto-grupos"])
 api_router.include_router(pessoas_router, tags=["pessoas"])
 api_router.include_router(pix_router, tags=["pix"])
+api_router.include_router(relatorios_evento_router, tags=["relatorios-evento"])
 __all__ = ["api_router"]

@@ -339,7 +339,8 @@ def get_low_stock_alert(
 ):
     """Produtos com estoque no ou abaixo do mínimo, com estimativa de dias até acabar."""
     produtos = db.query(Produto).filter(
-        and_(Produto.is_active == True, Produto.estoque <= Produto.estoque_minimo)
+        and_(Produto.is_active == True, Produto.estoque_contado == True,  # noqa: E712
+             Produto.estoque <= Produto.estoque_minimo)
     ).order_by(Produto.estoque).all()
 
     result = []

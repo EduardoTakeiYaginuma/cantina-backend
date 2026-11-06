@@ -397,11 +397,18 @@ def get_customer_sales_summary(
         func.avg(Sale.total_amount).label('gasto_medio')
     ).filter(Sale.customer_id == customer_id).first()
 
+    # Tudo o que já foi creditado ao cliente neste evento (recargas, Pix, quitações)
+    total_creditado = db.query(func.sum(BalanceTransaction.amount)).filter(
+        BalanceTransaction.customer_id == customer_id,
+        BalanceTransaction.transaction_type == "credit",
+    ).scalar() or 0
+
     return {
         "customer_id": customer_id,
         "customer_nome": customer.nome,
         "tipo": customer.tipo.value,
         "saldo_atual": customer.saldo,
+        "total_creditado": round(float(total_creditado), 2),
         "total_vendas": sales_summary.total_vendas or 0,
         "total_gasto": float(sales_summary.total_gasto or 0),
         "gasto_medio": float(sales_summary.gasto_medio or 0)

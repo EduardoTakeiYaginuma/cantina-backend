@@ -54,7 +54,8 @@ def get_dashboard_stats(
     low_stock_produtos = db.query(func.count(Produto.id)).filter(
         and_(
             Produto.estoque <= Produto.estoque_minimo,
-            Produto.is_active == True
+            Produto.is_active == True,
+            Produto.estoque_contado == True  # noqa: E712
         )
     ).scalar() or 0
 
@@ -148,7 +149,8 @@ def get_low_stock_produtos(
         produtos = db.query(Produto).filter(
             and_(
                 Produto.estoque <= threshold,
-                Produto.is_active == True
+                Produto.is_active == True,
+                Produto.estoque_contado == True  # noqa: E712
             )
         ).order_by(Produto.estoque.asc()).all()
     else:
@@ -156,7 +158,8 @@ def get_low_stock_produtos(
         produtos = db.query(Produto).filter(
             and_(
                 Produto.estoque <= Produto.estoque_minimo,
-                Produto.is_active == True
+                Produto.is_active == True,
+                Produto.estoque_contado == True  # noqa: E712
             )
         ).order_by(Produto.estoque.asc()).all()
 

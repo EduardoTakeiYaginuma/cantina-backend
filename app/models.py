@@ -197,6 +197,10 @@ class Produto(Base):
     estoque_minimo = Column(Integer, default=10)
     is_active = Column(Boolean, default=True)
 
+    # Estoque "não contado": vende sem validar estoque (pode ficar negativo) e fica fora dos alertas
+    estoque_contado = Column(Boolean, default=True, nullable=False, server_default="1")
+    ultima_contagem_em = Column(DateTime, nullable=True)
+
     # Sabores/variações: produtos do mesmo grupo (ex.: grupo "KitKat", variante "Morango").
     # Cada variante é um produto com estoque próprio; o nome fica "KitKat - Morango".
     grupo_id = Column(Integer, ForeignKey("produto_grupos.id"), nullable=True, index=True)
@@ -307,6 +311,25 @@ class Restock(Base):
     # Relationships
     produto = relationship("Produto", back_populates="restocks")
     created_by = relationship("SystemUser", back_populates="restocks_created")
+
+
+class ContagemEstoque(Base):
+    """Contagem física de estoque de um produto (histórico com a diferença para o sistema)."""
+    __tablename__ = "contagens_estoque"
+
+    id = Column(Integer, primary_key=True, index=True)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
+    produto_id = Column(Integer, ForeignKey("produtos.id"), nullable=False, index=True)
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+    quantidade_esperada = Column(Integer, nullable=True)  # estoque do sistema antes (null se não contado)
+    quantidade_contada = Column(Integer, nullable=False)
+    diferenca = Column(Integer, nullable=True)  # contada - esperada
+    estava_contado = Column(Boolean, default=True, nullable=False)
+    observacao = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now())
+
+    produto = relationship("Produto")
+    created_by = relationship("SystemUser", foreign_keys=[created_by_id])
 
 
 # ============================================
