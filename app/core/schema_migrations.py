@@ -39,8 +39,9 @@ def run_migrations(db_engine):
                 print(f"✅ Migration: coluna '{column}' adicionada em '{table}'")
 
     # Tabelas novas (idempotente: só cria se não existir)
-    from app.models import ContagemEstoque
+    from app.models import ContagemEstoque, BaixaEstoque
     ContagemEstoque.__table__.create(bind=db_engine, checkfirst=True)
+    BaixaEstoque.__table__.create(bind=db_engine, checkfirst=True)
 
     _migrate_event_scope(db_engine)
     migrate_pessoas(db_engine)
@@ -52,7 +53,7 @@ EVENT_SCOPED_TABLES = [
     "guest_sales", "guest_sale_items", "restocks", "balance_transactions",
     "product_import_batches", "customer_import_batches",
     "customer_audit_logs", "product_audit_logs", "system_user_audit_logs", "sale_audit_logs",
-    "pix_cobrancas", "contagens_estoque",
+    "pix_cobrancas", "contagens_estoque", "baixas_estoque",
 ]
 
 

@@ -92,6 +92,29 @@ class ContagemOut(BaseModel):
     created_by_nome: Optional[str] = None
 
 
+MOTIVOS_BAIXA = ("amassado", "aberto", "vencido", "quebrado", "outro")
+
+
+class BaixaCreate(BaseModel):
+    produto_id: int
+    quantidade: int = Field(..., gt=0)
+    motivo: Literal["amassado", "aberto", "vencido", "quebrado", "outro"] = "outro"
+    descricao: str = Field(..., min_length=3, max_length=500, description="O que aconteceu com o produto")
+
+
+class BaixaOut(BaseModel):
+    id: int
+    produto_id: int
+    produto_nome: Optional[str] = None
+    quantidade: int
+    motivo: str
+    descricao: Optional[str] = None
+    estoque_antes: Optional[int] = None
+    estoque_depois: Optional[int] = None
+    created_at: Optional[datetime] = None
+    created_by_nome: Optional[str] = None
+
+
 class ContagemResponse(BaseModel):
     registradas: int
     contagens: List[ContagemOut]

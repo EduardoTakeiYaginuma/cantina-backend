@@ -400,6 +400,20 @@ def montar_resumo(db: Session, evento_id: int, ev: EventConfig) -> dict:
     except Exception:
         dif_contagens = {}
 
+    # Baixas de estoque (produto amassado, aberto, vencido...)
+    baixas_por_produto: Dict[int, int] = {}
+    try:
+        from app.models import BaixaEstoque
+        for pid, q in (
+            db.query(BaixaEstoque.produto_id, func.sum(BaixaEstoque.quantidade))
+            .execution_options(all_events=True)
+            .filter(BaixaEstoque.evento_id == evento_id)
+            .group_by(BaixaEstoque.produto_id).all()
+        ):
+            baixas_por_produto[pid] = int(q or 0)
+    except Exception:
+        baixas_por_produto = {}
+
     produtos = _q(db, Produto, evento_id=evento_id).order_by(Produto.nome).all()
     nomes = {p.id: p.nome for p in produtos}
     estoque = [{
@@ -409,7 +423,7 @@ def montar_resumo(db: Session, evento_id: int, ev: EventConfig) -> dict:
         "estoque_contado": bool(getattr(p, "estoque_contado", True)),
         "reposto": reposto.get(p.id, 0),
         "vendido": prod_vendido.get(p.id, 0),
-        "baixas": 0,  # não há registro de baixas de produto neste sistema
+        "baixas": baixas_por_produto.get(p.id, 0),
         "diferenca_contagens": dif_contagens.get(p.id, 0),
     } for p in produtos]
 
@@ -830,7 +844,12 @@ def _dados_produtos(db: Session, evento_id: int) -> dict:
         contagens = _q(db, ContagemEstoque, evento_id=evento_id).all()
     except Exception:
         contagens = []
-    return {"vendas": vendas, "restocks": restocks, "contagens": contagens, "usuarios": usuarios}
+    try:
+        from app.models import BaixaEstoque
+        baixas = _q(db, BaixaEstoque, evento_id=evento_id).all()
+    except Exception:
+        baixas = []
+    return {"vendas": vendas, "restocks": restocks, "contagens": contagens, "baixas": baixas, "usuarios": usuarios}
 
 
 def _grupos(db: Session, evento_id: int) -> Dict[int, str]:
@@ -933,6 +952,18 @@ def montar_produto(db: Session, evento_id: int, produto_id: int) -> Optional[dic
             "tipo": "reposicao", "descricao": "Reposição de estoque", "quantidade": int(r.quantity or 0),
             "valor": None, "cliente": None, "usuario": usuarios.get(r.created_by_id),
         }))
+    baixado = 0
+    for b in d.get("baixas", []):
+        if b.produto_id != produto_id:
+            continue
+        baixado += int(b.quantidade or 0)
+        seq += 1
+        movs.append((b.created_at or datetime.min, seq, {
+            "tipo": "baixa",
+            "descricao": f"Baixa ({b.motivo})" + (f": {b.descricao}" if b.descricao else ""),
+            "quantidade": -int(b.quantidade or 0),
+            "valor": None, "cliente": None, "usuario": usuarios.get(b.created_by_id),
+        }))
     dif = 0
     for c in d["contagens"]:
         if c.produto_id != produto_id:
@@ -977,7 +1008,7 @@ def montar_produto(db: Session, evento_id: int, produto_id: int) -> Optional[dic
             "vendido_total": vendido_total, "faturamento": r2(fat), "estornado_qtd": estornado,
             "qtd_vendas": len(sales_set),
             "ticket_medio_item": r2(fat / vendido_total) if vendido_total else 0.0,
-            "diferenca_contagens": dif,
+            "diferenca_contagens": dif, "baixas": baixado,
         },
         "por_dia": [{"data": k, "quantidade": v["quantidade"], "total": r2(v["total"])} for k, v in sorted(dia.items())],
         "top_compradores": top,
@@ -1024,7 +1055,7 @@ def pdf_produto(ev: EventConfig, res: dict) -> bytes:
             [70 * mm, 40 * mm, 30 * mm, 36 * mm], right_cols=(2, 3)))
     fl.append(P("Movimentações", st["h2"]))
     rot = {"venda": "Venda", "venda_avulsa": "Avulsa", "reposicao": "Reposição", "contagem": "Contagem",
-           "estorno": "Estorno"}
+           "estorno": "Estorno", "baixa": "Baixa"}
     rows = [["Data", "Tipo", "Descrição", "Qtd", "Valor"]]
     for m in res["movimentos"]:
         desc = esc(m["descricao"])

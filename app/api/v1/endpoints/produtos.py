@@ -20,11 +20,11 @@ from app.core.dependencies import get_current_user, get_current_active_admin
 from app.repositories import ProdutoRepository
 from app.models import (
     SystemUser, Produto, ProdutoGrupo, SaleItem, GuestSaleItem, Restock, ProductImportBatch,
-    ProductImportBatchItem, ContagemEstoque,
+    ProductImportBatchItem, ContagemEstoque, BaixaEstoque,
 )
 from app import schemas
 from app.schemas.product import (
-    ContagemCreate, ContagemOut, ContagemResponse, EstoqueNaoContadoUpdate,
+    ContagemCreate, ContagemOut, ContagemResponse, EstoqueNaoContadoUpdate, BaixaCreate, BaixaOut,
 )
 from app.services.audit import AuditService, get_changed_fields
 from app.models_audit import AuditAction, ProductAuditLog
@@ -183,6 +183,80 @@ def registrar_contagem(
     for c in contagens:
         db.refresh(c)
     return {"registradas": len(contagens), "contagens": [_contagem_out(c) for c in contagens]}
+
+
+def _baixa_out(b: BaixaEstoque) -> BaixaOut:
+    return BaixaOut(
+        id=b.id,
+        produto_id=b.produto_id,
+        produto_nome=b.produto.nome if b.produto else None,
+        quantidade=b.quantidade,
+        motivo=b.motivo,
+        descricao=b.descricao,
+        estoque_antes=b.estoque_antes,
+        estoque_depois=b.estoque_depois,
+        created_at=b.created_at,
+        created_by_nome=b.created_by.username if b.created_by else None,
+    )
+
+
+@router.post("/baixa", response_model=BaixaOut)
+def registrar_baixa(
+        data: BaixaCreate,
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """Retira unidades do estoque (produto amassado, aberto, vencido...) guardando o motivo e a descrição."""
+    produto = db.query(Produto).filter(Produto.id == data.produto_id).first()
+    if not produto:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+    contado = bool(produto.estoque_contado)
+    antes = int(produto.estoque or 0)
+    # Produto contado: não dá para retirar mais do que existe. Não contado: a quantidade é estimada, então só avisa pelo saldo.
+    if contado and data.quantidade > antes:
+        raise HTTPException(status_code=400, detail=f"Estoque insuficiente: há {antes} unidade(s) de '{produto.nome}'")
+    depois = antes - data.quantidade
+    agora = datetime.now()
+    baixa = BaixaEstoque(
+        produto_id=produto.id,
+        created_by_id=current_user.id,
+        quantidade=data.quantidade,
+        motivo=data.motivo,
+        descricao=data.descricao.strip(),
+        estoque_antes=antes,
+        estoque_depois=depois,
+        created_at=agora,
+    )
+    db.add(baixa)
+    produto.estoque = depois
+    produto.updated_by_id = current_user.id
+    produto.updated_at = agora
+    AuditService(db).log_product_action(
+        produto_id=produto.id,
+        action=AuditAction.UPDATE,
+        created_by_id=current_user.id,
+        old_values={"estoque": antes},
+        new_values={"estoque": depois},
+        description=f"Baixa de {data.quantidade} un. ({data.motivo}) por {current_user.username}: {data.descricao.strip()}",
+    )
+    db.commit()
+    db.refresh(baixa)
+    return _baixa_out(baixa)
+
+
+@router.get("/baixa", response_model=List[BaixaOut])
+def listar_baixas(
+        produto_id: Optional[int] = Query(None),
+        limit: int = Query(100, ge=1, le=500),
+        db: Session = Depends(get_db),
+        current_user: SystemUser = Depends(get_current_user)
+):
+    """Histórico de baixas do evento, da mais recente para a mais antiga."""
+    q = db.query(BaixaEstoque)
+    if produto_id:
+        q = q.filter(BaixaEstoque.produto_id == produto_id)
+    rows = q.order_by(BaixaEstoque.created_at.desc(), BaixaEstoque.id.desc()).limit(limit).all()
+    return [_baixa_out(b) for b in rows]
 
 
 @router.get("/contagem", response_model=List[ContagemOut])

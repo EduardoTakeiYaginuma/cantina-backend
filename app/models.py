@@ -332,6 +332,25 @@ class ContagemEstoque(Base):
     created_by = relationship("SystemUser", foreign_keys=[created_by_id])
 
 
+class BaixaEstoque(Base):
+    """Retirada de estoque por produto ruim para vender (amassado, aberto, vencido...), com descrição."""
+    __tablename__ = "baixas_estoque"
+
+    id = Column(Integer, primary_key=True, index=True)
+    evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
+    produto_id = Column(Integer, ForeignKey("produtos.id"), nullable=False, index=True)
+    created_by_id = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+    quantidade = Column(Integer, nullable=False)
+    motivo = Column(String(50), nullable=False)  # amassado, aberto, vencido, quebrado, outro
+    descricao = Column(Text, nullable=True)
+    estoque_antes = Column(Integer, nullable=True)
+    estoque_depois = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now())
+
+    produto = relationship("Produto")
+    created_by = relationship("SystemUser", foreign_keys=[created_by_id])
+
+
 # ============================================
 # TABELA 7: Transações de Saldo
 # ============================================
