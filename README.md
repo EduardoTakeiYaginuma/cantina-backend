@@ -1,175 +1,61 @@
-# Cantina Swift Flow - Backend
+# Cantina — Backend
 
-Backend em FastAPI para o sistema de gerenciamento de cantina.
+API do sistema de cantina com saldo pré-pago para eventos (acampamentos, temporadas): clientes com saldo, produtos e estoque, vendas, vendas avulsas, relatórios por evento e auditoria.
 
-## Recursos
+FastAPI + SQLAlchemy + SQLite, Python 3.11. Todas as rotas ficam em `/api/v1`.
 
-- ✅ **Autenticação JWT** - Login seguro com tokens
-- ✅ **Gestão de Clientes** - CRUD completo com saldo
-- ✅ **Gestão de Produtos** - CRUD completo com controle de estoque
-- ✅ **Sistema de Vendas** - Carrinho, processamento e histórico
-- ✅ **Reposição de Estoque** - Controle de entrada de produtos
-- ✅ **Dashboard** - Estatísticas e métricas
-- ✅ **Transações de Saldo** - Histórico de créditos/débitos
-- ✅ **Documentação Automática** - Swagger/OpenAPI
+## Documentação (wiki)
 
-## Tecnologias
+- [Instalação e execução](https://github.com/EduardoTakeiYaginuma/cantina-backend/wiki/Instalacao-e-execucao): local, Docker, variáveis de ambiente, banco de demonstração.
+- [Autenticação e conceitos](https://github.com/EduardoTakeiYaginuma/cantina-backend/wiki/Autenticacao-e-conceitos): token, expiração por ociosidade, evento ativo, semanas, tipos de cliente, produto ativo/inativo.
+- [Referência da API](https://github.com/EduardoTakeiYaginuma/cantina-backend/wiki/Referencia-da-API): os 164 endpoints.
+- [Arquitetura](https://github.com/EduardoTakeiYaginuma/cantina-backend/wiki/Arquitetura).
 
-- **FastAPI** - Framework web moderno e rápido
-- **SQLAlchemy** - ORM para banco de dados
-- **SQLite** - Banco de dados (facilmente alterável para PostgreSQL/MySQL)
-- **JWT** - Autenticação com tokens
-- **Pydantic** - Validação de dados
-- **Uvicorn** - Servidor ASGI
+Com o backend rodando, o Swagger fica em `http://localhost:8000/docs`.
 
-## Estrutura do Projeto
+## Rodar
 
-```
-backend/
-├── main.py              # Aplicação principal
-├── models.py            # Modelos do banco de dados
-├── schemas.py           # Schemas Pydantic
-├── database.py          # Configuração do banco
-├── auth.py              # Autenticação JWT
-├── setup.py             # Script de configuração
-├── requirements.txt     # Dependências
-├── .env                 # Variáveis de ambiente
-└── routers/
-    ├── auth.py          # Rotas de autenticação
-    ├── customers.py     # Rotas de clientes
-    ├── products.py      # Rotas de produtos
-    ├── sales.py         # Rotas de vendas
-    └── dashboard.py     # Rotas do dashboard
+A partir desta pasta (o banco padrão é `./data/cantina.db`, relativo a ela):
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-## Instalação e Execução
+- API: `http://localhost:8000/api/v1` · Swagger: `/docs` · ReDoc: `/redoc` · Saúde: `/health`
+- Na primeira subida cria as tabelas, aplica as migrações e cria o usuário `admin` / `admin123` (troque a senha).
 
-### 1. Instalação Automática
+## Variáveis de ambiente
 
-```bash
-python setup.py
+Todas opcionais; podem ir num arquivo `.env`.
+
+| Variável | Padrão | Para que serve |
+|---|---|---|
+| `DATABASE_URL` | `sqlite:///./data/cantina.db` | Banco de dados |
+| `SECRET_KEY` | `your-secret-key-here` | Assinatura do JWT (**defina uma própria**) |
+| `ALGORITHM` | `HS256` | Algoritmo do JWT |
+| `IDLE_TIMEOUT_MINUTES` | `10` | Minutos sem uso até a sessão expirar |
+| `BACKUP_DIR` | `./backups` | Pasta dos backups |
+| `FRONTEND_PORT` | `8080` | Porta do front mostrada em Configurações > Rede |
+| `LOCAL_HOSTNAME_ENABLED` | `true` | Anunciar `http://cantina.local` na rede (mDNS) |
+
+## Estrutura
+
+```
+main.py            # app FastAPI, CORS, subida (tabelas, migrações, admin padrão)
+database.py        # engine e sessão presa ao evento ativo
+app/api/v1/        # routers (um arquivo por área em endpoints/)
+app/core/          # JWT, dependências de auth, escopo por evento, migrações
+app/services/      # auditoria, backup, relatórios, pix, pessoas
+scripts/           # isolar_eventos.py (migração única), seed_demo.py (dados fictícios)
+data/  backups/    # banco SQLite e backups
 ```
 
-### 2. Instalação Manual
+## Dados de demonstração
 
-```bash
-pip install -r requirements.txt
-python main.py
-```
+`scripts/seed_demo.py` popula um banco **vazio** com dados fictícios (evento com 2 semanas, clientes, produtos, vendas). Veja o passo a passo na [wiki](https://github.com/EduardoTakeiYaginuma/cantina-backend/wiki/Instalacao-e-execucao#banco-de-demonstração-dados-fictícios). Nunca aponte para o banco real.
 
-### 3. Usando Uvicorn
+## Interface
 
-```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-## Acesso
-
-- **API**: http://localhost:8000
-- **Documentação**: http://localhost:8000/docs
-- **Redoc**: http://localhost:8000/redoc
-
-## Credenciais Padrão
-
-- **Username**: admin
-- **Password**: admin123
-
-## Endpoints Principais
-
-### Autenticação
-- `POST /auth/token` - Login
-- `POST /auth/register` - Registro
-- `GET /auth/me` - Perfil do usuário
-
-### Clientes
-- `GET /customers` - Listar clientes
-- `POST /customers` - Criar cliente
-- `PUT /customers/{id}` - Atualizar cliente
-- `DELETE /customers/{id}` - Excluir cliente
-- `POST /customers/{id}/balance` - Adicionar saldo
-
-### Produtos
-- `GET /products` - Listar produtos
-- `POST /products` - Criar produto
-- `PUT /products/{id}` - Atualizar produto
-- `DELETE /products/{id}` - Excluir produto
-- `POST /products/{id}/restock` - Repor estoque
-
-### Vendas
-- `GET /sales` - Listar vendas
-- `POST /sales` - Criar venda
-- `GET /sales/{id}` - Detalhes da venda
-- `GET /sales/stats/today` - Estatísticas do dia
-
-### Dashboard
-- `GET /dashboard/stats` - Estatísticas gerais
-
-## Configuração
-
-### Variáveis de Ambiente (.env)
-
-```env
-DATABASE_URL=sqlite:///./cantina.db
-SECRET_KEY=sua_chave_secreta_muito_longa_e_segura
-ALGORITHM=HS256
-IDLE_TIMEOUT_MINUTES=10
-```
-
-### Banco de Dados
-
-O sistema usa SQLite por padrão, mas pode ser facilmente alterado para PostgreSQL ou MySQL modificando a `DATABASE_URL`.
-
-## Dados de Teste
-
-O sistema inclui dados de exemplo:
-
-**Clientes:**
-- João Silva (CLI001) - R$ 50,00
-- Maria Santos (CLI002) - R$ 75,50
-- Pedro Costa (CLI003) - R$ 25,30
-
-**Produtos:**
-- Refrigerante Coca-Cola (REF001) - R$ 5,00
-- Sanduíche Natural (SAN001) - R$ 12,00
-- Suco de Laranja (SUC001) - R$ 8,50
-- Água Mineral (AGU001) - R$ 3,00
-- Pão de Açúcar (PAO001) - R$ 6,50
-
-## Funcionalidades
-
-### Sistema de Vendas
-- Verificação de estoque em tempo real
-- Validação de saldo do cliente
-- Atualização automática de estoque
-- Registro de transações de saldo
-- Histórico completo de vendas
-
-### Gestão de Estoque
-- Controle de entradas (reposição)
-- Alertas de estoque baixo
-- Histórico de movimentações
-
-### Autenticação
-- JWT tokens seguros
-- Middleware de autenticação
-- Proteção de todas as rotas
-
-### Dashboard
-- Estatísticas em tempo real
-- Métricas de vendas diárias
-- Controle de estoque baixo
-- Totais de clientes e produtos
-
-## Desenvolvimento
-
-Para contribuir com o projeto:
-
-1. Clone o repositório
-2. Instale as dependências
-3. Execute os testes
-4. Faça suas alterações
-5. Submeta um pull request
-
-## Licença
-
-Este projeto está sob a licença MIT.
+A interface web fica no repositório [cantina-swift-flow](https://github.com/EduardoTakeiYaginuma/cantina-swift-flow).
