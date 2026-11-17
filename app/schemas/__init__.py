@@ -6,6 +6,7 @@ Importa todos os schemas para um namespace único.
 
 # User & Auth
 from .user import (
+    TutorialStatusUpdate,
     SystemUserBase,
     SystemUserCreate,
     SystemUserResponse,

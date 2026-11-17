@@ -58,6 +58,8 @@ class SystemUser(Base):
     hashed_password = Column(String(255), nullable=False)
     role = Column(Enum(UserRole), default=UserRole.OPERADOR, nullable=False)
     is_active = Column(Boolean, default=True)
+    # Tutorial de primeiro acesso: vazio = ainda não viu; "pulado" ou "concluido" = não abre sozinho
+    tutorial_status = Column(String(20), nullable=True)
 
     # Campos de auditoria
     created_at = Column(DateTime, default=lambda: datetime.now())

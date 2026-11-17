@@ -100,6 +100,21 @@ def read_users_me(current_user: SystemUser = Depends(get_current_user)):
     return current_user
 
 
+@router.put("/me/tutorial", response_model=schemas.SystemUserResponse)
+def set_my_tutorial_status(
+        data: schemas.TutorialStatusUpdate,
+        current_user: SystemUser = Depends(get_current_user),
+        db: Session = Depends(get_db)
+):
+    """
+    Guarda se o usuário logado já viu o tutorial de primeiro acesso (pulou ou concluiu).
+    Fica no perfil, então vale em qualquer aparelho.
+    """
+    current_user.tutorial_status = None if data.status == "pendente" else data.status
+    SystemUserRepository(db).update(current_user)
+    return current_user
+
+
 @router.put("/me/password", response_model=schemas.SystemUserResponse)
 def change_my_password(
         password_data: schemas.PasswordChange,

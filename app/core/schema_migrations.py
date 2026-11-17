@@ -22,6 +22,7 @@ def run_migrations(db_engine):
         ("event_configs", "tipo", "VARCHAR(20) NOT NULL DEFAULT 'acampamento'"),
         ("produtos", "estoque_contado", "BOOLEAN NOT NULL DEFAULT 1"),
         ("produtos", "ultima_contagem_em", "DATETIME"),
+        ("system_users", "tutorial_status", "VARCHAR(20)"),
     ]
     with db_engine.connect() as conn:
         for table, column, col_type in migrations:
@@ -35,6 +36,10 @@ def run_migrations(db_engine):
                         f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"
                     )
                 )
+                # Tutorial de primeiro acesso: quem já usava o sistema antes desta coluna não é
+                # interrompido (fica como "pulado" e pode refazer pelo menu). Só perfis novos veem sozinhos.
+                if (table, column) == ("system_users", "tutorial_status"):
+                    conn.execute(sqlalchemy.text("UPDATE system_users SET tutorial_status = 'pulado'"))
                 conn.commit()
                 print(f"✅ Migration: coluna '{column}' adicionada em '{table}'")
 

@@ -4,7 +4,7 @@ Schemas relacionados a autenticação e usuários do sistema.
 """
 from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from app.models import UserRole
 
@@ -39,9 +39,16 @@ class SystemUserResponse(SystemUserBase):
     created_at: datetime
     evento_id: Optional[int] = None
     is_global: bool = False
+    # Tutorial de primeiro acesso: None = ainda não viu
+    tutorial_status: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+
+class TutorialStatusUpdate(BaseModel):
+    """Situação do tutorial do próprio usuário ("pendente" volta a abrir sozinho no próximo acesso)"""
+    status: Literal["pendente", "pulado", "concluido"]
 
 
 class PasswordChange(BaseModel):
