@@ -870,8 +870,8 @@ def export_sales_audit_report(
     sales = sort_sales(query.all() + guest_sales, order_by)
 
     # Gerar nome do arquivo
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename_base = f"sales_audit_report_{timestamp}"
+    from app.core.filenames import event_file_name
+    filename_base = event_file_name(db, "auditoria_vendas", "")
 
     # Exportar CSV
     if format == "csv":

@@ -55,6 +55,8 @@ class SystemUser(Base):
     # Evento do perfil. Vazio = perfil global (entra em qualquer evento, ex.: admin padrão)
     evento_id = Column(Integer, ForeignKey("event_configs.id"), nullable=True, index=True)
     username = Column(String(255), unique=True, index=True, nullable=False)
+    # Nome completo da pessoa (ajuda a reconhecer o perfil, ex.: ao religar em outro evento)
+    nome_completo = Column(String(255), nullable=True)
     hashed_password = Column(String(255), nullable=False)
     role = Column(Enum(UserRole), default=UserRole.OPERADOR, nullable=False)
     is_active = Column(Boolean, default=True)

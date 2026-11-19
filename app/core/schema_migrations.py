@@ -23,6 +23,7 @@ def run_migrations(db_engine):
         ("produtos", "estoque_contado", "BOOLEAN NOT NULL DEFAULT 1"),
         ("produtos", "ultima_contagem_em", "DATETIME"),
         ("system_users", "tutorial_status", "VARCHAR(20)"),
+        ("system_users", "nome_completo", "VARCHAR(255)"),
     ]
     with db_engine.connect() as conn:
         for table, column, col_type in migrations:

@@ -2,7 +2,7 @@ import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional
 import gzip
 from dotenv import load_dotenv
 
@@ -35,10 +35,16 @@ class BackupManager:
 
         self.db_name = self.db_path.stem
 
-    def create_backup(self) -> Dict[str, str]:
-        """Create a backup of the SQLite database"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_filename = f"backup_{self.db_name}_{timestamp}.db"
+    def create_backup(self, evento_nome: Optional[str] = None) -> Dict[str, str]:
+        """Cria um backup do banco: backup_<evento>_<dd-mm-aaaa>_<HHhMM>.db.gz"""
+        from app.core.filenames import file_name
+
+        now = datetime.now()
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
+        backup_filename = file_name("backup", evento_nome, "db", when=now)
+        # Dois backups no mesmo minuto: acrescenta os segundos
+        if (self.backup_dir / f"{backup_filename}.gz").exists():
+            backup_filename = backup_filename[:-3] + now.strftime("m%S") + ".db"
         backup_path = self.backup_dir / backup_filename
 
         try:
@@ -83,7 +89,8 @@ class BackupManager:
         """List all available backups"""
         backups = []
 
-        for backup_file in sorted(self.backup_dir.glob("backup_*.db.gz"), reverse=True):
+        for backup_file in sorted(self.backup_dir.glob("backup_*.db.gz"),
+                                  key=lambda f: f.stat().st_mtime, reverse=True):  # mais novo primeiro
             stat = backup_file.stat()
             backups.append({
                 "filename": backup_file.name,

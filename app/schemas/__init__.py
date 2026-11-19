@@ -14,6 +14,10 @@ from .user import (
     AdminPasswordChange,
     RoleChange,
     GlobalChange,
+    NomeCompletoChange,
+    ExistingAccount,
+    UsernameCheckResponse,
+    RelinkRequest,
     Token,
     TokenData,
 )

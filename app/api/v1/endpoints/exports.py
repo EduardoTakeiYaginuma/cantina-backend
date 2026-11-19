@@ -33,6 +33,9 @@ _MONEY = 'R$ #,##0.00'
 _PERCENT = '0.0%'
 
 
+from app.core.filenames import event_file_name
+
+
 def _text_key(value) -> str:
     """Ordenação de texto sem diferenciar maiúsculas e acentos."""
     text = unicodedata.normalize("NFKD", str(value or ""))
@@ -102,8 +105,8 @@ def _workbook(sheet_title: str, columns: List[tuple], rows: List[dict], info: Li
     return buf
 
 
-def _excel_response(buf: io.BytesIO, base_name: str) -> StreamingResponse:
-    filename = f"{base_name}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+def _excel_response(buf: io.BytesIO, db: Session, base_name: str) -> StreamingResponse:
+    filename = event_file_name(db, base_name, "xlsx")
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -194,7 +197,7 @@ def export_customers(
         ("Ordenação", order_text),
         ("Total de clientes", len(rows)),
     ]
-    return _excel_response(_workbook("Clientes", columns, rows, info), "clientes")
+    return _excel_response(_workbook("Clientes", columns, rows, info), db, "clientes")
 
 
 # ============================================
@@ -289,7 +292,7 @@ def export_produtos(
         ("% vendido", "Vendidos ÷ (vendidos + estoque atual): quanto do total que tinha já saiu"),
         ("Total de produtos", len(rows)),
     ]
-    return _excel_response(_workbook("Produtos", columns, rows, info), "produtos")
+    return _excel_response(_workbook("Produtos", columns, rows, info), db, "produtos")
 
 
 def _order_description(sorts, order_by, direction, then_by, then_direction) -> str:

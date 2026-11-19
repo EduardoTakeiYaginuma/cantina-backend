@@ -48,6 +48,7 @@ def register_user(
         role=user.role or UserRole.OPERADOR,
         created_by_id=current_admin.id,  # ← Registra quem criou
         evento_id=None if user.is_global else scoped_event_id(db),
+        nome_completo=user.nome_completo,
     )
 
     # 🆕 AUDITORIA: Registrar criação
@@ -58,6 +59,7 @@ def register_user(
         created_by_id=current_admin.id,
         new_values={
             "username": db_user.username,
+            "nome_completo": db_user.nome_completo,
             "role": db_user.role.value,
             "global": db_user.is_global,
         },
@@ -160,6 +162,107 @@ def list_users(
     """
     user_repo = SystemUserRepository(db)
     return user_repo.get_all()
+
+
+@router.get("/users/username-check", response_model=schemas.UsernameCheckResponse)
+def check_username(
+        username: str = Query(..., min_length=1),
+        db: Session = Depends(get_db),
+        current_admin: SystemUser = Depends(get_current_active_admin)
+):
+    """
+    Antes de criar um perfil: o nome está livre, já está em uso neste evento (duplicado),
+    ou pertence a uma conta de outro evento / desativada (existe), que pode ser religada.
+    """
+    repo = SystemUserRepository(db)
+    name = username.strip()
+    user = repo.get_by_username_ci(name)
+    if user is None:
+        return {"status": "livre"}
+    evento_id = scoped_event_id(db)
+    in_event = user.is_global or user.evento_id == evento_id
+    if user.is_active and in_event:
+        return {"status": "duplicado"}
+    return {
+        "status": "existe",
+        "conta": {
+            "id": user.id,
+            "username": user.username,
+            "nome_completo": user.nome_completo,
+            "role": user.role,
+            "is_active": bool(user.is_active),
+            "is_global": user.is_global,
+            "no_evento_atual": in_event,
+            "eventos": repo.events_of(user),
+        },
+        "sugestao": repo.suggest_username(name),
+    }
+
+
+@router.post("/users/{user_id}/religar", response_model=schemas.SystemUserResponse)
+def relink_user(
+        user_id: int,
+        data: schemas.RelinkRequest,
+        db: Session = Depends(get_db),
+        current_admin: SystemUser = Depends(get_current_active_admin)
+):
+    """
+    Religa ao evento ativo (e reativa) um perfil que já existe, sem criar outro usuário.
+    A senha continua a mesma, a não ser que uma nova seja enviada. Perfil global continua global.
+    """
+    from datetime import datetime
+    from app.models import EventConfig
+
+    if user_id == current_admin.id:
+        raise HTTPException(status_code=400, detail="Você não pode religar o seu próprio perfil.")
+    user = db.query(SystemUser).execution_options(all_events=True).filter(SystemUser.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    evento_id = scoped_event_id(db)
+    if evento_id is None and not user.is_global:
+        raise HTTPException(status_code=400, detail="Não há evento ativo para religar o perfil.")
+
+    def event_name(eid):
+        if eid is None:
+            return "todos os eventos"
+        ev = db.query(EventConfig).filter(EventConfig.id == eid).first()
+        return ev.event_name if ev else str(eid)
+
+    old = {"evento": event_name(user.evento_id), "is_active": bool(user.is_active)}
+    if data.nome_completo and data.nome_completo != user.nome_completo:
+        old["nome_completo"] = user.nome_completo
+        user.nome_completo = data.nome_completo
+    if not user.is_global:
+        user.evento_id = evento_id
+    user.is_active = True
+    if data.new_password:
+        user.hashed_password = get_password_hash(data.new_password)
+    user.updated_by_id = current_admin.id
+    user.updated_at = datetime.now()
+    db.commit()
+    db.refresh(user)
+
+    audit = AuditService(db)
+    new = {"evento": event_name(user.evento_id), "is_active": True}
+    if "nome_completo" in old:
+        new["nome_completo"] = user.nome_completo
+    audit.log_user_action(
+        user_id=user.id,
+        action=AuditAction.ACTIVATE,
+        created_by_id=current_admin.id,
+        old_values=old,
+        new_values=new,
+        description=f"Perfil religado ao evento \"{new['evento']}\" por {current_admin.username}",
+    )
+    if data.new_password:
+        audit.log_user_action(
+            user_id=user.id,
+            action=AuditAction.PASSWORD_CHANGE,
+            created_by_id=current_admin.id,
+            new_values={"password_changed_by_admin": True},
+            description=f"Senha redefinida ao religar, pelo administrador {current_admin.username}",
+        )
+    return user
 
 
 @router.delete("/users/{user_id}")
@@ -306,6 +409,39 @@ def change_user_role(
     )
 
     return {"message": "User role changed successfully"}
+
+@router.put("/users/{user_id}/nome", response_model=schemas.SystemUserResponse)
+def change_user_nome(
+        user_id: int,
+        data: schemas.NomeCompletoChange,
+        db: Session = Depends(get_db),
+        current_admin: SystemUser = Depends(get_current_active_admin)
+):
+    """Define o nome completo de um perfil. Apenas administradores."""
+    from datetime import datetime
+
+    user = SystemUserRepository(db).get_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    old = user.nome_completo
+    if old == data.nome_completo:
+        return user
+    user.nome_completo = data.nome_completo
+    user.updated_by_id = current_admin.id
+    user.updated_at = datetime.now()
+    db.commit()
+    db.refresh(user)
+
+    AuditService(db).log_user_action(
+        user_id=user_id,
+        action=AuditAction.UPDATE,
+        created_by_id=current_admin.id,
+        old_values={"nome_completo": old},
+        new_values={"nome_completo": user.nome_completo},
+        description=f"Nome completo alterado por {current_admin.username}",
+    )
+    return user
+
 
 @router.put("/users/{user_id}/global")
 def change_user_global(

@@ -742,28 +742,24 @@ class AuditService:
         """
         Gera nome de arquivo com metadados (usado por todos os formatos).
         """
-        from datetime import datetime as dt
+        from app.core.filenames import event_name, file_name, br_date
 
-        filename_parts = [base_name]
-
-        # Adicionar timestamp
-        timestamp = dt.now().strftime('%Y-%m-%d_%H-%M-%S')
-        filename_parts.append(timestamp)
-
-        # Adicionar filtros ao nome (para rastreabilidade)
+        # Filtros no nome (para rastreabilidade), com datas no padrão brasileiro
+        extras = []
         if user_id:
-            filename_parts.append(f'user_{user_id}')
+            extras.append(f'usuario_{user_id}')
         if entity_type:
-            filename_parts.append(entity_type)
+            extras.append(entity_type)
         if action:
-            filename_parts.append(action.lower())
+            extras.append(action.lower())
         if start_date:
-            filename_parts.append(f'from_{start_date.strftime("%Y%m%d")}')
+            extras.append(f'de_{br_date(start_date)}')
         if end_date:
-            filename_parts.append(f'to_{end_date.strftime("%Y%m%d")}')
+            extras.append(f'ate_{br_date(end_date)}')
 
-        filename = '_'.join(filename_parts) + extension
-        return filename
+        # Os filtros vão depois do evento e da hora em que o arquivo foi gerado
+        stem = file_name(base_name, event_name(self.db), '')
+        return '_'.join([stem] + [e.replace('/', '-') for e in extras]) + extension
 
     def export_logs_to_csv(
         self,
@@ -810,16 +806,16 @@ class AuditService:
 
         # Adicionar informações de filtros no topo
         writer.writerow(['RELATÓRIO DE LOGS DE AUDITORIA'])
-        writer.writerow(['Gerado em:', datetime.now().strftime('%Y-%m-%d %H:%M:%S')])
+        writer.writerow(['Gerado em:', datetime.now().strftime('%d/%m/%Y %H:%M:%S')])
         writer.writerow(['Total de registros:', total])
         writer.writerow([])  # Linha em branco
 
         # Filtros aplicados
         writer.writerow(['FILTROS APLICADOS:'])
         if start_date:
-            writer.writerow(['Data inicial:', start_date.strftime('%Y-%m-%d %H:%M:%S')])
+            writer.writerow(['Data inicial:', start_date.strftime('%d/%m/%Y %H:%M:%S')])
         if end_date:
-            writer.writerow(['Data final:', end_date.strftime('%Y-%m-%d %H:%M:%S')])
+            writer.writerow(['Data final:', end_date.strftime('%d/%m/%Y %H:%M:%S')])
         if user_id:
             writer.writerow(['ID do usuário:', user_id])
         if action:
@@ -858,7 +854,7 @@ class AuditService:
         for log in logs:
             writer.writerow([
                 log.id,
-                log.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                log.created_at.strftime('%d/%m/%Y %H:%M:%S'),
                 log.entity_type.upper() if hasattr(log, 'entity_type') else '',
                 getattr(log, 'entity_name', ''),
                 getattr(log, 'entity_id', ''),
@@ -872,7 +868,7 @@ class AuditService:
 
         # Gerar nome do arquivo
         filename = self._get_filename(
-            'audit_logs', '.csv',
+            'auditoria', '.csv',
             start_date, end_date, user_id, action, entity_type
         )
 
@@ -947,9 +943,9 @@ class AuditService:
         # Gerar descrição legível dos filtros
         filters_description = []
         if start_date:
-            filters_description.append(f"Data inicial: {start_date.strftime('%Y-%m-%d %H:%M:%S')}")
+            filters_description.append(f"Data inicial: {start_date.strftime('%d/%m/%Y %H:%M:%S')}")
         if end_date:
-            filters_description.append(f"Data final: {end_date.strftime('%Y-%m-%d %H:%M:%S')}")
+            filters_description.append(f"Data final: {end_date.strftime('%d/%m/%Y %H:%M:%S')}")
         if user_id:
             filters_description.append(f"ID do usuário: {user_id}")
         if action:
@@ -990,7 +986,7 @@ class AuditService:
 
         # Gerar nome do arquivo
         filename = self._get_filename(
-            'audit_logs', '.json',
+            'auditoria', '.json',
             start_date, end_date, user_id, action, entity_type
         )
 
@@ -1073,7 +1069,7 @@ class AuditService:
         # Dados
         for row_num, log in enumerate(logs, 2):
             ws_logs.cell(row=row_num, column=1, value=log.id)
-            ws_logs.cell(row=row_num, column=2, value=log.created_at.strftime('%Y-%m-%d %H:%M:%S'))
+            ws_logs.cell(row=row_num, column=2, value=log.created_at.strftime('%d/%m/%Y %H:%M:%S'))
             ws_logs.cell(row=row_num, column=3, value=getattr(log, 'entity_type', '').upper())
             ws_logs.cell(row=row_num, column=4, value=getattr(log, 'entity_name', ''))
             ws_logs.cell(row=row_num, column=5, value=getattr(log, 'entity_id', ''))
@@ -1110,7 +1106,7 @@ class AuditService:
         ws_stats.cell(row=2, column=1, value="Total de registros:")
         ws_stats.cell(row=2, column=2, value=total)
         ws_stats.cell(row=3, column=1, value="Exportado em:")
-        ws_stats.cell(row=3, column=2, value=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        ws_stats.cell(row=3, column=2, value=datetime.now().strftime('%d/%m/%Y %H:%M:%S'))
 
         # Filtros aplicados
         row = 5
@@ -1120,12 +1116,12 @@ class AuditService:
         filters_added = False
         if start_date:
             ws_stats.cell(row=row, column=1, value="Data inicial:")
-            ws_stats.cell(row=row, column=2, value=start_date.strftime('%Y-%m-%d %H:%M:%S'))
+            ws_stats.cell(row=row, column=2, value=start_date.strftime('%d/%m/%Y %H:%M:%S'))
             row += 1
             filters_added = True
         if end_date:
             ws_stats.cell(row=row, column=1, value="Data final:")
-            ws_stats.cell(row=row, column=2, value=end_date.strftime('%Y-%m-%d %H:%M:%S'))
+            ws_stats.cell(row=row, column=2, value=end_date.strftime('%d/%m/%Y %H:%M:%S'))
             row += 1
             filters_added = True
         if user_id:
@@ -1206,7 +1202,7 @@ class AuditService:
 
         # Gerar nome do arquivo
         filename = self._get_filename(
-            'audit_logs', '.xlsx',
+            'auditoria', '.xlsx',
             start_date, end_date, user_id, action, entity_type
         )
 
@@ -1378,7 +1374,7 @@ class AuditService:
 
         # Gerar nome do arquivo
         filename = self._get_filename(
-            'audit_logs', '.pdf',
+            'auditoria', '.pdf',
             start_date, end_date, user_id, action, entity_type
         )
 

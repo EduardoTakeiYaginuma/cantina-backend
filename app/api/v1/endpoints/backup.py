@@ -11,6 +11,9 @@ from app.core.dependencies import get_current_user, require_admin
 from app.models import SystemUser
 from app import schemas
 from app.services.backup import BackupManager
+from app.core.filenames import event_name, event_file_name
+from app.core.dependencies import get_db
+from sqlalchemy.orm import Session
 
 # Load environment variables
 load_dotenv()
@@ -27,13 +30,14 @@ backup_manager = BackupManager()
 
 @router.post("/create", response_model=schemas.BackupResponse)
 def create_backup(
+        db: Session = Depends(get_db),
         current_admin: SystemUser = Depends(get_current_user)  # ← Apenas ADMIN
 ):
     """
     Cria um novo backup do banco de dados. 
     Apenas administradores podem criar backups.
     """
-    result = backup_manager.create_backup()
+    result = backup_manager.create_backup(event_name(db))
 
     if not result["success"]:
         raise HTTPException(
@@ -197,6 +201,7 @@ def download_backup(
 
 @router.get("/download")
 def download_database(
+        db: Session = Depends(get_db),
         current_admin: SystemUser = Depends(get_current_user)
 ):
     """
@@ -213,8 +218,7 @@ def download_database(
             detail=f"Banco de dados não encontrado: {db_path}"
         )
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"cantina_backup_{timestamp}.db"
+    filename = event_file_name(db, "backup", "db")
 
     return FileResponse(
         path=str(db_path),

@@ -805,6 +805,85 @@ def excel_evento(res: dict, clientes: List[dict]) -> bytes:
 
 
 # ============================================
+# Clientes por saldo (cards "Saldo restante" e "Saldo negativo")
+# ============================================
+
+FILTROS_SALDO = {"positivo": "Clientes com saldo", "negativo": "Clientes com saldo negativo"}
+
+
+def clientes_por_saldo(db: Session, evento_id: int, filtro: str) -> List[dict]:
+    """Mesma regra do resumo: saldo > 0 (maior primeiro) ou saldo < 0 (mais negativo primeiro)."""
+    clientes = listar_clientes(db, evento_id)
+    if filtro == "positivo":
+        return sorted((c for c in clientes if c["saldo"] > 0), key=lambda c: (-c["saldo"], c["nome"]))
+    return sorted((c for c in clientes if c["saldo"] < 0), key=lambda c: (c["saldo"], c["nome"]))
+
+
+def _linha_saldo(c: dict, generico: bool) -> list:
+    tipo = "" if generico else ("Equipe" if c["tipo"] == "equipe" else "Acampante")
+    return [c["nome"], c["nickname"] or "", tipo, c.get("semana_nome") or "", c.get("quarto") or "", c["saldo"]]
+
+
+def pdf_saldos(ev: EventConfig, filtro: str, clientes: List[dict]) -> bytes:
+    k = _pdf_kit()
+    P, mm = k["Paragraph"], k["mm"]
+    st = _styles()
+    buf = BytesIO()
+    titulo = FILTROS_SALDO[filtro]
+    doc = _doc(buf, f"{titulo} - {ev.event_name}")
+    generico = (evento_dict(ev)["tipo"] == "generico")
+    total = r2(sum(c["saldo"] for c in clientes))
+    esc = lambda s: str(s).replace("&", "&amp;").replace("<", "&lt;")  # noqa: E731
+    fl = [P(f"{titulo} - {esc(ev.event_name)}", st["title"]),
+          P(f"{len(clientes)} cliente(s) &nbsp;|&nbsp; Total: <b>{brl(total)}</b>", st["sub"])]
+    rows = [["Cliente", "Apelido", "Tipo", "Semana", "Quarto", "Saldo"]]
+    for c in clientes:
+        l = _linha_saldo(c, generico)
+        rows.append([P(esc(l[0]), st["cell"]), P(esc(l[1]), st["cell"]), l[2], P(esc(l[3]), st["cell"]),
+                     esc(l[4]), brl(l[5])])
+    if len(rows) == 1:
+        rows.append(["Nenhum cliente", "", "", "", "", ""])
+    rows.append([P("<b>Total</b>", st["cell"]), "", "", "", "", brl(total)])
+    t = _table(rows, [52 * mm, 32 * mm, 20 * mm, 30 * mm, 16 * mm, 26 * mm], right_cols=(5,))
+    t.setStyle(k["TableStyle"]([("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold")]))
+    fl.append(t)
+    doc.build(fl, onFirstPage=_footer, onLaterPages=_footer)
+    return buf.getvalue()
+
+
+def excel_saldos(ev: EventConfig, filtro: str, clientes: List[dict]) -> bytes:
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    money = 'R$ #,##0.00;[Red]-R$ #,##0.00'
+    generico = (evento_dict(ev)["tipo"] == "generico")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Negativos" if filtro == "negativo" else "Com saldo"
+    ws.append([f"{FILTROS_SALDO[filtro]} - {ev.event_name}"])
+    ws["A1"].font = Font(bold=True, size=13)
+    ws.append([])
+    headers = ["Nome", "Apelido", "Tipo", "Semana", "Quarto", "Saldo"]
+    ws.append(headers)
+    for c in ws[3]:
+        c.fill, c.font = PatternFill("solid", fgColor="1E3A5F"), Font(bold=True, color="FFFFFF")
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    for c in clientes:
+        ws.append(_linha_saldo(c, generico))
+        ws.cell(row=ws.max_row, column=6).number_format = money
+    ws.append(["Total", f"{len(clientes)} cliente(s)", "", "", "", r2(sum(c["saldo"] for c in clientes))])
+    for cell in ws[ws.max_row]:
+        cell.font = Font(bold=True)
+    ws.cell(row=ws.max_row, column=6).number_format = money
+    for col, w in zip("ABCDEF", (38, 22, 12, 22, 10, 16)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A4"
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+# ============================================
 # Produtos
 # ============================================
 

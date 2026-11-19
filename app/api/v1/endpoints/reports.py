@@ -18,6 +18,9 @@ from database import get_db
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
+from app.core.filenames import event_file_name
+
+
 def _build_report_data(db: Session, date_from: Optional[date], date_to: Optional[date], include_cancelled: bool):
     """Busca e agrega os dados de vendas para os relatórios."""
     query = db.query(Sale)
@@ -293,7 +296,7 @@ def export_excel(
     wb.save(output)
     output.seek(0)
 
-    filename = f"relatorio_vendas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    filename = event_file_name(db, "relatorio_vendas", "xlsx")
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -476,7 +479,7 @@ def export_pdf(
     doc.build(story)
     output.seek(0)
 
-    filename = f"relatorio_vendas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    filename = event_file_name(db, "relatorio_vendas", "pdf")
     return StreamingResponse(
         output,
         media_type="application/pdf",
